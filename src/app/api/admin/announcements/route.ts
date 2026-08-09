@@ -13,6 +13,11 @@ function audienceRoles(audience: "ALL" | "MENTORS" | "MENTEES"): Role[] {
   return ["MENTOR", "MENTEE"];
 }
 
+// Bulk sends run at reduced concurrency plus a retry pass (see
+// sendBulkMail) — this can take a while for large recipient lists, so
+// give the function more room than the platform default.
+export const maxDuration = 60;
+
 export async function POST(req: Request): Promise<Response> {
   try {
     const session = await requireSession(["ADMIN"]);
@@ -41,13 +46,16 @@ export async function POST(req: Request): Promise<Response> {
       },
     });
 
+    let emailResult: { sent: number; failed: number; failures: { email: string; error: string }[] } | null =
+      null;
+
     if (sendEmail) {
       const recipients = await db.user.findMany({
         where: { status: "APPROVED", role: { in: audienceRoles(audience) } },
         select: { email: true },
       });
       const mail = announcementEmail(announcement.title, announcement.body);
-      await sendBulkMail(
+      emailResult = await sendBulkMail(
         recipients.map((r) => r.email),
         mail.subject,
         mail.html
@@ -59,10 +67,21 @@ export async function POST(req: Request): Promise<Response> {
       action: "announcement.create",
       targetType: "Announcement",
       targetId: announcement.id,
-      metadata: { title: announcement.title, audience, emailSent: sendEmail },
+      metadata: {
+        title: announcement.title,
+        audience,
+        emailSent: sendEmail,
+        ...(emailResult
+          ? {
+              emailSentCount: emailResult.sent,
+              emailFailedCount: emailResult.failed,
+              failedEmails: emailResult.failures.slice(0, 25).map((f) => f.email),
+            }
+          : {}),
+      },
     });
 
-    return Response.json({ announcement }, { status: 201 });
+    return Response.json({ announcement, emailResult }, { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }

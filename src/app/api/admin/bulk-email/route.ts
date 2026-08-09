@@ -7,6 +7,11 @@ import { bulkEmail } from "@/lib/email/templates";
 import { logAudit } from "@/lib/audit";
 import type { Role } from "@prisma/client";
 
+// Bulk sends run at reduced concurrency plus a retry pass (see
+// sendBulkMail) — this can take a while for large recipient lists, so
+// give the function more room than the platform default.
+export const maxDuration = 60;
+
 export async function POST(req: Request): Promise<Response> {
   try {
     const session = await requireSession(["ADMIN"]);
@@ -57,6 +62,10 @@ export async function POST(req: Request): Promise<Response> {
         audience: parsed.data.audience,
         sent: result.sent,
         failed: result.failed,
+        // Cap what we store — a full list for a huge recipient set
+        // would bloat the audit log; the API response below has the
+        // complete list for the admin to act on immediately.
+        failedEmails: result.failures.slice(0, 25).map((f) => f.email),
       },
     });
 
