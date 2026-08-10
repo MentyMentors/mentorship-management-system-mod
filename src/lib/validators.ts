@@ -250,6 +250,29 @@ export const bulkEmailSchema = z.object({
 
 export type BulkEmailInput = z.infer<typeof bulkEmailSchema>;
 
+// Bulk sends are chunked across multiple requests from the client so a
+// single serverless invocation never has to email hundreds of
+// recipients in one go (see /api/admin/bulk-email). Each chunk request
+// carries the running totals so the server can log one accurate audit
+// entry on the final chunk without needing shared state between calls.
+export const bulkEmailChunkSchema = bulkEmailSchema.extend({
+  offset: z.coerce.number().int().min(0).default(0),
+  runningSent: z.coerce.number().int().min(0).default(0),
+  runningFailed: z.coerce.number().int().min(0).default(0),
+  runningFailedEmails: z.array(z.string()).default([]),
+});
+
+export type BulkEmailChunkInput = z.infer<typeof bulkEmailChunkSchema>;
+
+export const announcementSendChunkSchema = z.object({
+  offset: z.coerce.number().int().min(0).default(0),
+  runningSent: z.coerce.number().int().min(0).default(0),
+  runningFailed: z.coerce.number().int().min(0).default(0),
+  runningFailedEmails: z.array(z.string()).default([]),
+});
+
+export type AnnouncementSendChunkInput = z.infer<typeof announcementSendChunkSchema>;
+
 // ------------------------------------------------------------------
 // Admin actions
 // ------------------------------------------------------------------

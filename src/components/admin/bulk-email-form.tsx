@@ -6,7 +6,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Copy, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 import { bulkEmailSchema, type BulkEmailInput } from "@/lib/validators";
-import { useApiAction } from "@/hooks/use-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,15 +33,28 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-interface BulkEmailResult {
+interface ChunkResponse {
+  sent: number;
+  failed: number;
+  failuresThisChunk: { email: string; error: string }[];
+  total: number;
+  nextOffset: number | null;
+  done: boolean;
+  error?: string;
+}
+
+interface SendResult {
   sent: number;
   failed: number;
   failures: { email: string; error: string }[];
 }
 
 export function BulkEmailForm() {
-  const { run, pending } = useApiAction();
-  const [result, setResult] = useState<BulkEmailResult | null>(null);
+  const [sending, setSending] = useState(false);
+  const [progress, setProgress] = useState<{ sent: number; failed: number; total: number } | null>(
+    null
+  );
+  const [result, setResult] = useState<SendResult | null>(null);
 
   const form = useForm<BulkEmailInput>({
     resolver: zodResolver(bulkEmailSchema),
@@ -51,12 +63,59 @@ export function BulkEmailForm() {
 
   const onSubmit = async (values: BulkEmailInput) => {
     setResult(null);
-    const data = await run<BulkEmailResult>("/api/admin/bulk-email", {
-      method: "POST",
-      body: JSON.stringify(values),
-    });
-    setResult(data);
-    form.reset({ subject: "", body: "", audience: "ALL" });
+    setSending(true);
+
+    let offset = 0;
+    let sent = 0;
+    let failed = 0;
+    let failures: { email: string; error: string }[] = [];
+    let stoppedEarly = false;
+
+    try {
+      for (;;) {
+        const res = await fetch("/api/admin/bulk-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...values,
+            offset,
+            runningSent: sent,
+            runningFailed: failed,
+            runningFailedEmails: failures.map((f) => f.email).slice(0, 50),
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as ChunkResponse;
+
+        if (!res.ok) {
+          toast.error(
+            data.error ?? `Sending stopped after ${sent + failed} of ${progress?.total ?? "?"} — try again to resume.`
+          );
+          stoppedEarly = true;
+          break;
+        }
+
+        sent = data.sent;
+        failed = data.failed;
+        failures = [...failures, ...data.failuresThisChunk];
+        setProgress({ sent, failed, total: data.total });
+
+        if (data.done || data.nextOffset === null) break;
+        offset = data.nextOffset;
+      }
+
+      if (!stoppedEarly) {
+        setResult({ sent, failed, failures });
+        toast.success(
+          failed > 0 ? `Sent ${sent} emails, ${failed} failed` : `Sent ${sent} emails`
+        );
+        form.reset({ subject: "", body: "", audience: "ALL" });
+      }
+    } catch {
+      toast.error(`Connection lost after ${sent + failed} sent — try again to resume.`);
+    } finally {
+      setSending(false);
+      setProgress(null);
+    }
   };
 
   const copyFailed = async () => {
@@ -126,10 +185,15 @@ export function BulkEmailForm() {
                 </FormItem>
               )}
             />
-            <Button type="submit" disabled={pending}>
-              {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+            <Button type="submit" disabled={sending}>
+              {sending && <Loader2 className="h-4 w-4 animate-spin" />}
               Send email
             </Button>
+            {sending && progress && (
+              <p className="text-sm text-muted-foreground">
+                Sending… {progress.sent + progress.failed} of {progress.total}
+              </p>
+            )}
           </form>
         </Form>
 

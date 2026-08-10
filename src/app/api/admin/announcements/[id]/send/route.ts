@@ -1,36 +1,43 @@
 import { db } from "@/lib/db";
 import { requireSession, errorResponse } from "@/lib/authz";
-import { bulkEmailChunkSchema } from "@/lib/validators";
+import { announcementSendChunkSchema } from "@/lib/validators";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendBulkMail } from "@/lib/email/mailer";
-import { bulkEmail } from "@/lib/email/templates";
+import { announcementEmail } from "@/lib/email/templates";
 import { logAudit } from "@/lib/audit";
 import type { Role } from "@prisma/client";
 
-// One chunk at a time keeps each request comfortably under serverless
-// time limits — sending hundreds of recipients in a single invocation
-// (even at safe SMTP concurrency) can run long enough to be killed
-// mid-send, which is worse than a merely slow send. The client
-// (BulkEmailForm) calls this repeatedly with the next offset until done.
+// Mirrors /api/admin/bulk-email's chunking — see that route for why.
 export const maxDuration = 60;
 const CHUNK_SIZE = 15;
 
-export async function POST(req: Request): Promise<Response> {
+function audienceRoles(audience: "ALL" | "MENTORS" | "MENTEES"): Role[] {
+  if (audience === "MENTORS") return ["MENTOR"];
+  if (audience === "MENTEES") return ["MENTEE"];
+  return ["MENTOR", "MENTEE"];
+}
+
+/** POST /api/admin/announcements/:id/send — email one chunk of the announcement's audience. */
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<Response> {
   try {
     const session = await requireSession(["ADMIN"]);
+    const { id } = await params;
 
-    const limit = rateLimit(`bulk-email:${session.user.id}`, {
+    const limit = rateLimit(`announcement-email:${session.user.id}`, {
       limit: 40,
       windowMs: 60 * 60 * 1000,
     });
     if (!limit.success) {
       return Response.json(
-        { error: "Bulk email rate limit reached. Try again later." },
+        { error: "Rate limit reached. Try again later." },
         { status: 429 }
       );
     }
 
-    const parsed = bulkEmailChunkSchema.safeParse(await req.json());
+    const parsed = announcementSendChunkSchema.safeParse(await req.json());
     if (!parsed.success) {
       return Response.json(
         { error: "Validation failed", issues: parsed.error.flatten() },
@@ -38,28 +45,18 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    const {
-      subject,
-      body,
-      audience,
-      offset,
-      runningSent,
-      runningFailed,
-      runningFailedEmails,
-    } = parsed.data;
+    const announcement = await db.announcement.findUnique({ where: { id } });
+    if (!announcement) {
+      return Response.json({ error: "Announcement not found" }, { status: 404 });
+    }
 
-    const roles: Role[] =
-      audience === "MENTORS"
-        ? ["MENTOR"]
-        : audience === "MENTEES"
-          ? ["MENTEE"]
-          : ["MENTOR", "MENTEE"];
+    const { offset, runningSent, runningFailed, runningFailedEmails } = parsed.data;
 
-    // Re-resolved on every chunk (cheap query) rather than trusting a
-    // client-supplied list — stays correct even if membership changes
-    // slightly mid-send, and needs no server-side state between calls.
     const allRecipients = await db.user.findMany({
-      where: { status: "APPROVED", role: { in: roles } },
+      where: {
+        status: "APPROVED",
+        role: { in: audienceRoles(announcement.audience) },
+      },
       select: { email: true },
       orderBy: { id: "asc" },
     });
@@ -67,7 +64,7 @@ export async function POST(req: Request): Promise<Response> {
     const total = allRecipients.length;
     const chunk = allRecipients.slice(offset, offset + CHUNK_SIZE).map((r) => r.email);
 
-    const mail = bulkEmail(subject, body);
+    const mail = announcementEmail(announcement.title, announcement.body);
     const result =
       chunk.length > 0
         ? await sendBulkMail(chunk, mail.subject, mail.html)
@@ -86,8 +83,10 @@ export async function POST(req: Request): Promise<Response> {
     if (done) {
       await logAudit({
         actorId: session.user.id,
-        action: "email.bulk_send",
-        metadata: { subject, audience, sent, failed, failedEmails },
+        action: "announcement.email_sent",
+        targetType: "Announcement",
+        targetId: announcement.id,
+        metadata: { title: announcement.title, sent, failed, failedEmails },
       });
     }
 

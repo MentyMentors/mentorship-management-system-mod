@@ -4,9 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, Megaphone } from "lucide-react";
+import { Copy, Loader2, Megaphone } from "lucide-react";
+import { toast } from "sonner";
 import { announcementSchema, type AnnouncementInput } from "@/lib/validators";
-import { useApiAction } from "@/hooks/use-api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,14 +36,29 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
-interface AnnouncementResponse {
-  emailResult: { sent: number; failed: number; failures: { email: string; error: string }[] } | null;
+interface ChunkResponse {
+  sent: number;
+  failed: number;
+  failuresThisChunk: { email: string; error: string }[];
+  total: number;
+  nextOffset: number | null;
+  done: boolean;
+  error?: string;
+}
+
+interface SendResult {
+  sent: number;
+  failed: number;
+  failures: { email: string; error: string }[];
 }
 
 export function AnnouncementForm() {
   const router = useRouter();
-  const { run, pending } = useApiAction();
-  const [emailResult, setEmailResult] = useState<AnnouncementResponse["emailResult"]>(null);
+  const [sending, setSending] = useState(false);
+  const [progress, setProgress] = useState<{ sent: number; failed: number; total: number } | null>(
+    null
+  );
+  const [result, setResult] = useState<SendResult | null>(null);
 
   const form = useForm<AnnouncementInput>({
     resolver: zodResolver(announcementSchema),
@@ -51,15 +66,80 @@ export function AnnouncementForm() {
   });
 
   const onSubmit = async (values: AnnouncementInput) => {
-    setEmailResult(null);
-    const data = await run<AnnouncementResponse>("/api/admin/announcements", {
-      method: "POST",
-      body: JSON.stringify(values),
-      successMessage: "Announcement published",
-    });
-    setEmailResult(data.emailResult);
-    form.reset({ title: "", body: "", audience: "ALL", sendEmail: true });
-    router.refresh();
+    setResult(null);
+    setSending(true);
+
+    try {
+      const createRes = await fetch("/api/admin/announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const createData = (await createRes.json().catch(() => ({}))) as {
+        announcement?: { id: string };
+        error?: string;
+      };
+      if (!createRes.ok || !createData.announcement) {
+        toast.error(createData.error ?? "Failed to publish announcement");
+        return;
+      }
+      toast.success("Announcement published");
+      form.reset({ title: "", body: "", audience: "ALL", sendEmail: true });
+      router.refresh();
+
+      if (!values.sendEmail) return;
+
+      let offset = 0;
+      let sent = 0;
+      let failed = 0;
+      let failures: { email: string; error: string }[] = [];
+
+      for (;;) {
+        const res = await fetch(
+          `/api/admin/announcements/${createData.announcement.id}/send`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              offset,
+              runningSent: sent,
+              runningFailed: failed,
+              runningFailedEmails: failures.map((f) => f.email).slice(0, 50),
+            }),
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as ChunkResponse;
+
+        if (!res.ok) {
+          toast.error(
+            data.error ?? `Emailing stopped after ${sent + failed} of ${progress?.total ?? "?"}.`
+          );
+          break;
+        }
+
+        sent = data.sent;
+        failed = data.failed;
+        failures = [...failures, ...data.failuresThisChunk];
+        setProgress({ sent, failed, total: data.total });
+
+        if (data.done || data.nextOffset === null) {
+          setResult({ sent, failed, failures });
+          break;
+        }
+        offset = data.nextOffset;
+      }
+    } catch {
+      toast.error("Something went wrong while sending.");
+    } finally {
+      setSending(false);
+      setProgress(null);
+    }
+  };
+
+  const copyFailed = async () => {
+    if (!result?.failures.length) return;
+    await navigator.clipboard.writeText(result.failures.map((f) => f.email).join(", "));
+    toast.success("Failed addresses copied");
   };
 
   return (
@@ -141,29 +221,44 @@ export function AnnouncementForm() {
                 </FormItem>
               )}
             />
-            <Button type="submit" disabled={pending}>
-              {pending && <Loader2 className="h-4 w-4 animate-spin" />}
+            <Button type="submit" disabled={sending}>
+              {sending && <Loader2 className="h-4 w-4 animate-spin" />}
               Publish
             </Button>
+            {sending && progress && (
+              <p className="text-sm text-muted-foreground">
+                Emailing… {progress.sent + progress.failed} of {progress.total}
+              </p>
+            )}
           </form>
         </Form>
 
-        {emailResult && (
+        {result && (
           <div className="mt-4 space-y-2 rounded-lg border p-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="success">{emailResult.sent} emailed</Badge>
-              {emailResult.failed > 0 && (
-                <Badge variant="destructive">{emailResult.failed} failed</Badge>
+              <Badge variant="success">{result.sent} emailed</Badge>
+              {result.failed > 0 && (
+                <Badge variant="destructive">{result.failed} failed</Badge>
               )}
             </div>
-            {emailResult.failures.length > 0 && (
-              <div className="max-h-40 overflow-y-auto rounded-md bg-muted/50 p-3 text-xs">
-                {emailResult.failures.map((f) => (
-                  <div key={f.email} className="py-0.5">
-                    <span className="font-medium">{f.email}</span>{" "}
-                    <span className="text-muted-foreground">— {f.error}</span>
-                  </div>
-                ))}
+            {result.failures.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    These addresses didn&apos;t get the email (already retried once):
+                  </p>
+                  <Button size="sm" variant="outline" onClick={() => void copyFailed()}>
+                    <Copy className="h-3.5 w-3.5" /> Copy
+                  </Button>
+                </div>
+                <div className="max-h-40 overflow-y-auto rounded-md bg-muted/50 p-3 text-xs">
+                  {result.failures.map((f) => (
+                    <div key={f.email} className="py-0.5">
+                      <span className="font-medium">{f.email}</span>{" "}
+                      <span className="text-muted-foreground">— {f.error}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

@@ -75,6 +75,8 @@ function describe(log: AuditLogRow): string {
       return `Ended pairing: ${s("mentor")} / ${s("mentee")}`;
     case "announcement.create":
       return `Posted announcement "${s("title")}" to ${s("audience")}${m.emailSent ? " (emailed)" : ""}`;
+    case "announcement.email_sent":
+      return `Emailed announcement "${s("title")}" (${m.sent ?? 0} sent, ${m.failed ?? 0} failed)`;
     case "email.bulk_send":
       return `Sent bulk email "${s("subject")}" to ${s("audience")} (${m.sent ?? 0} sent, ${m.failed ?? 0} failed)`;
     case "data.import":
