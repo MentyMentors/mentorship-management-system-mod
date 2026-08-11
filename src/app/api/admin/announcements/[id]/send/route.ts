@@ -26,8 +26,10 @@ export async function POST(
     const session = await requireSession(["ADMIN"]);
     const { id } = await params;
 
+    // CHUNK_SIZE recipients per request — 150 requests/hr gives a ceiling
+    // of ~2250 recipients/hr per admin, comfortably above a 1000+ send.
     const limit = rateLimit(`announcement-email:${session.user.id}`, {
-      limit: 40,
+      limit: 150,
       windowMs: 60 * 60 * 1000,
     });
     if (!limit.success) {

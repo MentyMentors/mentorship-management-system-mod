@@ -162,13 +162,13 @@ const organizationJsonLd = {
   logo: "https://www.mentmw.org/images/menty-logo-full.png",
   description:
     "Menty pairs university students with a mentor who's already walked their road — automated matching, weekly check-ins and meeting logs for campus mentorship programmes.",
-  email: "mailto:mentymentors@gmail.com",
+  email: "mailto:admin@mentmw.org",
   areaServed: "MW",
   contactPoint: [
     {
       "@type": "ContactPoint",
       contactType: "customer support",
-      email: "mentymentors@gmail.com",
+      email: "admin@mentmw.org",
       telephone: "+265985370226",
     },
   ],
@@ -615,13 +615,13 @@ export default function LandingPage() {
               </p>
               <div className="mt-8 space-y-4">
                 <a
-                  href="mailto:mentymentors@gmail.com"
+                  href="mailto:admin@mentmw.org"
                   className="flex items-center gap-4 text-sm font-medium text-navy hover:text-teal dark:text-foreground"
                 >
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-navy text-white">
                     <Mail className="h-4 w-4" />
                   </span>
-                  mentymentors@gmail.com
+                  admin@mentmw.org
                 </a>
                 <a
                   href="tel:+265985370226"
@@ -636,7 +636,7 @@ export default function LandingPage() {
             </div>
 
             <form
-              action="mailto:mentymentors@gmail.com"
+              action="mailto:admin@mentmw.org"
               method="post"
               encType="text/plain"
               className="space-y-5 rounded-3xl bg-card p-8 shadow-glass sm:p-10"

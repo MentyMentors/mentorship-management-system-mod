@@ -15,7 +15,7 @@ and analytics — presented as a modern SaaS dashboard with light/dark mode.
 | Database   | Neon PostgreSQL via Prisma ORM                    |
 | Auth       | Auth.js (NextAuth v5) — credentials, JWT sessions |
 | Forms      | React Hook Form + Zod (client & server validation)|
-| Email      | Gmail SMTP via Nodemailer                         |
+| Email      | Hostinger SMTP via Nodemailer                     |
 | Testing    | Vitest (unit + integration)                       |
 | Deployment | Vercel (incl. cron jobs)                          |
 
@@ -55,7 +55,7 @@ Internal 1:1 messaging with unread counts, read/unread toggling,
 conversation search and quick actions to **Send Email** (mailto) and
 **Open WhatsApp** (wa.me link generated from the recipient's phone).
 
-### Communication (Gmail SMTP)
+### Communication (Hostinger SMTP)
 Automated emails for registration, approval, pairing, weekly reminders
 (Vercel cron, Mondays), meeting reminders (daily cron) and announcements.
 
@@ -88,7 +88,7 @@ sanitization and HTML-escaped email templates, security headers.
 ## Quick start
 
 ```bash
-cp .env.example .env        # fill in Neon + Gmail + secrets
+cp .env.example .env        # fill in Neon + Hostinger + secrets
 npm install
 npm run db:migrate:dev      # create schema on your Neon database
 npm run db:seed             # admin account + sample data
@@ -104,7 +104,7 @@ Default seed credentials (change immediately):
 ## Documentation
 
 - [Installation guide](docs/INSTALLATION.md)
-- [Deployment guide (Vercel + Neon + Gmail)](docs/DEPLOYMENT.md)
+- [Deployment guide (Vercel + Neon + Hostinger)](docs/DEPLOYMENT.md)
 - [Testing guide](docs/TESTING.md)
 
 ## Scripts

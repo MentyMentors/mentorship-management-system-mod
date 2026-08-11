@@ -4,7 +4,7 @@
 
 - **Node.js 20+** and npm 10+
 - A **Neon** PostgreSQL project (free tier works) — <https://neon.tech>
-- A **Gmail** account with 2-factor authentication and an App Password
+- A **Hostinger** email mailbox to send from (created under hPanel → Emails)
 
 ## 1. Clone and install
 
@@ -30,8 +30,8 @@ Fill in every value:
 | `DIRECT_URL` | Same page → **Direct** connection (used by migrations). |
 | `AUTH_SECRET` | `openssl rand -base64 32` |
 | `AUTH_URL` | `http://localhost:3000` locally |
-| `SMTP_USER` / `SMTP_PASSWORD` | Gmail address + App Password (<https://myaccount.google.com/apppasswords>) |
-| `EMAIL_FROM` | e.g. `Faculty Mentorship <you@gmail.com>` |
+| `SMTP_USER` / `SMTP_PASSWORD` | Hostinger mailbox address + its login password (hPanel → Emails) |
+| `EMAIL_FROM` | e.g. `Faculty Mentorship <you@yourdomain.com>` |
 | `CRON_SECRET` | `openssl rand -hex 24` |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Initial admin credentials |
 | `GOOGLE_SITE_VERIFICATION` | Optional — the `content` value from Google Search Console's HTML-tag verification method (see `docs/DEPLOYMENT.md`) |
@@ -72,6 +72,6 @@ Open <http://localhost:3000>, log in as the admin, and explore:
 - **`P1001: Can't reach database server`** — check both Neon URLs and that
   your IP is allowed (Neon allows all by default).
 - **Emails not sending** — the app logs `[mailer]` warnings and continues;
-  verify the App Password and that `SMTP_PORT=465`, `SMTP_SECURE=true`.
+  verify the mailbox password and that `SMTP_PORT=465`, `SMTP_SECURE=true`.
 - **`AUTH_SECRET` missing** — Auth.js refuses to start without it in
   production mode.

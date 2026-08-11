@@ -5,13 +5,20 @@ let transporter: nodemailer.Transporter | null = null;
 function getTransporter(): nodemailer.Transporter {
   if (!transporter) {
     transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST ?? "smtp.gmail.com",
+      host: process.env.SMTP_HOST ?? "smtp.hostinger.com",
       port: Number(process.env.SMTP_PORT ?? 465),
       secure: (process.env.SMTP_SECURE ?? "true") === "true",
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASSWORD,
       },
+      // Hosting SMTP relays (Hostinger included) typically cap
+      // simultaneous connections much tighter than Gmail's frontend —
+      // pool a handful of connections and reuse them across sends
+      // instead of opening a fresh TLS handshake per message.
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
     });
   }
   return transporter;
@@ -27,6 +34,10 @@ export interface MailOptions {
 interface SendResult {
   ok: boolean;
   error?: string;
+  // SMTP 5xx = the server permanently rejected the message (bad address,
+  // policy/quota block) — retrying won't help. 4xx and connection-level
+  // errors are usually transient and worth a retry.
+  permanent?: boolean;
 }
 
 async function sendMailInternal({
@@ -57,17 +68,26 @@ async function sendMailInternal({
     return { ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const responseCode =
+      error && typeof error === "object" && "responseCode" in error
+        ? Number((error as { responseCode?: unknown }).responseCode)
+        : undefined;
     console.error(
       `[mailer] Failed to send "${subject}" to ${Array.isArray(to) ? to.join(", ") : to}`,
       error
     );
-    return { ok: false, error: message };
+    return {
+      ok: false,
+      error: message,
+      permanent: typeof responseCode === "number" && responseCode >= 500,
+    };
   }
 }
 
 /**
- * Send an email via Gmail SMTP. Failures are logged but never thrown —
- * email delivery must not break registration, approval or pairing flows.
+ * Send an email via the configured SMTP relay. Failures are logged but
+ * never thrown — email delivery must not break registration, approval
+ * or pairing flows.
  */
 export async function sendMail(options: MailOptions): Promise<boolean> {
   const result = await sendMailInternal(options);
@@ -80,20 +100,23 @@ export interface BulkMailResult {
   failures: { email: string; error: string }[];
 }
 
-// Gmail's SMTP relay throttles/drops connections under high concurrency
-// — small batches with a short pause between them stay well under that,
-// at some cost to total send time for large recipient lists.
-const BULK_BATCH_SIZE = 5;
+// SMTP relays throttle/drop connections under high concurrency — small
+// batches sized to the connection pool above, with a short pause between
+// them, stay well under that, at some cost to total send time for large
+// recipient lists.
+const BULK_BATCH_SIZE = 3;
 const BULK_BATCH_DELAY_MS = 250;
 const BULK_RETRY_DELAY_MS = 3000;
+
+type BulkFailure = { email: string; error: string; permanent: boolean };
 
 async function sendBatched(
   recipients: string[],
   subject: string,
   html: string
-): Promise<{ ok: string[]; failures: { email: string; error: string }[] }> {
+): Promise<{ ok: string[]; failures: BulkFailure[] }> {
   const ok: string[] = [];
-  const failures: { email: string; error: string }[] = [];
+  const failures: BulkFailure[] = [];
 
   for (let i = 0; i < recipients.length; i += BULK_BATCH_SIZE) {
     const batch = recipients.slice(i, i + BULK_BATCH_SIZE);
@@ -102,7 +125,7 @@ async function sendBatched(
     );
     for (const r of results) {
       if (r.ok) ok.push(r.to);
-      else failures.push({ email: r.to, error: r.error ?? "Unknown error" });
+      else failures.push({ email: r.to, error: r.error ?? "Unknown error", permanent: r.permanent ?? false });
     }
     if (i + BULK_BATCH_SIZE < recipients.length) {
       await new Promise((resolve) => setTimeout(resolve, BULK_BATCH_DELAY_MS));
@@ -114,9 +137,9 @@ async function sendBatched(
 
 /**
  * Send the same email to many recipients individually (BCC-free).
- * Reports exactly which addresses failed and why, and retries failures
- * once after a cool-down — most bulk failures are transient rate
- * limiting rather than a genuinely bad address.
+ * Reports exactly which addresses failed and why, and retries transient
+ * failures once after a cool-down — permanent rejections (bad address,
+ * policy/quota block) are not retried since they'll fail identically.
  */
 export async function sendBulkMail(
   recipients: string[],
@@ -127,16 +150,21 @@ export async function sendBulkMail(
   let sent = first.ok.length;
   let failures = first.failures;
 
-  if (failures.length > 0) {
+  const retryable = failures.filter((f) => !f.permanent);
+  if (retryable.length > 0) {
     await new Promise((resolve) => setTimeout(resolve, BULK_RETRY_DELAY_MS));
     const retry = await sendBatched(
-      failures.map((f) => f.email),
+      retryable.map((f) => f.email),
       subject,
       html
     );
     sent += retry.ok.length;
-    failures = retry.failures;
+    failures = [...failures.filter((f) => f.permanent), ...retry.failures];
   }
 
-  return { sent, failed: failures.length, failures };
+  return {
+    sent,
+    failed: failures.length,
+    failures: failures.map(({ email, error }) => ({ email, error })),
+  };
 }

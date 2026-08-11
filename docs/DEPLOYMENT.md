@@ -1,4 +1,4 @@
-# Deployment Guide (Vercel + Neon + Gmail)
+# Deployment Guide (Vercel + Neon + Hostinger)
 
 ## 1. Neon (database)
 
@@ -7,16 +7,18 @@
    (must include `?sslmode=require&pgbouncer=true`).
 3. Copy the **direct** connection string → `DIRECT_URL`.
 
-## 2. Gmail SMTP
+## 2. Hostinger SMTP
 
-1. Enable 2-factor authentication on the Google account.
-2. Create an App Password: <https://myaccount.google.com/apppasswords>.
-3. Use it as `SMTP_PASSWORD` with `SMTP_USER` = the Gmail address,
-   `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_SECURE=true`.
+1. Create (or use an existing) mailbox for the app under Hostinger's
+   **Emails** section (e.g. `no-reply@yourdomain.com`).
+2. Use the mailbox's login password as `SMTP_PASSWORD`, the full mailbox
+   address as `SMTP_USER`, and `SMTP_HOST=smtp.hostinger.com`,
+   `SMTP_PORT=465`, `SMTP_SECURE=true`.
 
-> Gmail limits ~500 recipients/day for regular accounts. The bulk mailer
-> sends in batches of 20; for larger cohorts consider Google Workspace or
-> a transactional provider.
+> Hostinger's shared/business mail plans cap outgoing volume per hour
+> (check your plan's limits in hPanel). The bulk mailer sends in batches
+> of 5 with a short pause between batches; for larger cohorts consider a
+> higher-tier mailbox or a transactional provider.
 
 ## 3. Vercel
 

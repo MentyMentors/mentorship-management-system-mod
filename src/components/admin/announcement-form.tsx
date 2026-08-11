@@ -210,7 +210,7 @@ export function AnnouncementForm() {
                 <FormItem className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <FormLabel>Also send as email</FormLabel>
-                    <FormDescription>Via Gmail SMTP.</FormDescription>
+                    <FormDescription>Via Hostinger SMTP.</FormDescription>
                   </div>
                   <FormControl>
                     <Switch
