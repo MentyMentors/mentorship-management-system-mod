@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
+import { NotificationBell } from "@/components/layout/notification-bell";
 import { getInitials } from "@/lib/utils";
 
 interface TopbarProps {
@@ -39,6 +40,7 @@ export function Topbar({ user }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-2">
+        <NotificationBell />
         <ThemeToggle />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
