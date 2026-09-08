@@ -53,7 +53,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/mentor/meetings", label: "Meetings", icon: CalendarDays },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/announcements", label: "Programme", icon: ClipboardList },
-    { href: "/issues", label: "Resources", icon: BookOpen },
+    { href: "/issues", label: "Report Issue", icon: BookOpen },
     { href: "/profile", label: "Settings", icon: Settings },
   ],
   MENTEE: [
@@ -61,7 +61,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/mentee/meetings", label: "Meetings", icon: CalendarDays },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/announcements", label: "Programme", icon: ClipboardList },
-    { href: "/issues", label: "Resources", icon: BookOpen },
+    { href: "/issues", label: "Report Issue", icon: BookOpen },
     { href: "/profile", label: "Settings", icon: Settings },
   ],
 };
