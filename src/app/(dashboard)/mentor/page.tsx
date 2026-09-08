@@ -296,10 +296,6 @@ export default async function MentorDashboardPage() {
           )}
         </CardContent>
       </Card>
-
-      <p className="flex items-center justify-center gap-1.5 py-4 text-sm text-muted-foreground">
-        <span className="text-green">♥</span> Building confident students. Stronger communities. Better futures.
-      </p>
     </div>
   );
 }
