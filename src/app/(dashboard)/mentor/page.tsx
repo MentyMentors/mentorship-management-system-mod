@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, CalendarDays, MoreVertical, Plus, Users } from "lucide-react";
+import { ArrowRight, CalendarDays, Mail, MoreVertical, Phone, Plus, Users } from "lucide-react";
 import { differenceInCalendarWeeks } from "date-fns";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -26,10 +25,7 @@ export const metadata = { title: "Mentor dashboard" };
 export const dynamic = "force-dynamic";
 
 function programmeWeek(startDate: Date, endDate: Date) {
-  const totalWeeks = Math.max(
-    1,
-    differenceInCalendarWeeks(endDate, startDate) + 1
-  );
+  const totalWeeks = Math.max(1, differenceInCalendarWeeks(endDate, startDate) + 1);
   const rawWeek = differenceInCalendarWeeks(new Date(), startDate) + 1;
   const currentWeek = Math.min(Math.max(rawWeek, 1), totalWeeks);
   return { currentWeek, totalWeeks };
@@ -57,13 +53,13 @@ export default async function MentorDashboardPage() {
   if (!profile) {
     return (
       <p className="text-muted-foreground">
-        Your account has no mentor profile for the active semester. Contact
-        an administrator.
+        Your account has no mentor profile for the active semester. Contact an administrator.
       </p>
     );
   }
 
   const now = new Date();
+
   const monthMeetingsCount = await db.meeting.count({
     where: {
       pairing: { mentorProfileId: profile.id },
@@ -84,7 +80,6 @@ export default async function MentorDashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="font-display text-2xl font-bold">
@@ -99,7 +94,6 @@ export default async function MentorDashboardPage() {
         </div>
       </div>
 
-      {/* CTA + stats */}
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr_1fr]">
         <Link
           href="/mentor/meetings"
@@ -111,9 +105,7 @@ export default async function MentorDashboardPage() {
             </div>
             <div>
               <p className="font-semibold">Log a meeting</p>
-              <p className="text-sm text-white/60">
-                Record your check-in with a mentee
-              </p>
+              <p className="text-sm text-white/60">Record your check-in with a mentee</p>
             </div>
           </div>
           <span className="flex h-9 w-9 items-center justify-center rounded-full bg-green text-navy transition-transform group-hover:translate-x-0.5">
@@ -148,7 +140,6 @@ export default async function MentorDashboardPage() {
         </Card>
       </div>
 
-      {/* Progress + announcements */}
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -177,7 +168,6 @@ export default async function MentorDashboardPage() {
         </Card>
       </div>
 
-      {/* Mentees table */}
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle>My mentees</CardTitle>
@@ -190,8 +180,7 @@ export default async function MentorDashboardPage() {
         <CardContent className="p-0">
           {profile.pairings.length === 0 ? (
             <p className="p-6 text-sm text-muted-foreground">
-              No mentees assigned yet — you&apos;ll be notified by email as
-              soon as one is paired with you.
+              No mentees assigned yet — you&apos;ll be notified by email as soon as one is paired with you.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -212,10 +201,7 @@ export default async function MentorDashboardPage() {
                     const meetings = pairing.meetings;
                     const last = meetings.find((m) => m.date <= now);
                     const next = [...meetings].reverse().find((m) => m.date > now);
-                    const progress = Math.min(
-                      100,
-                      Math.round((meetings.length / totalWeeks) * 100)
-                    );
+                    const progress = Math.min(100, Math.round((meetings.length / totalWeeks) * 100));
                     const whatsapp = buildWhatsAppLink(mentee.user.phone);
 
                     return (
@@ -223,9 +209,7 @@ export default async function MentorDashboardPage() {
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <Avatar className="h-9 w-9">
-                              <AvatarFallback>
-                                {getInitials(mentee.user.name)}
-                              </AvatarFallback>
+                              <AvatarFallback>{getInitials(mentee.user.name)}</AvatarFallback>
                             </Avatar>
                             <div>
                               <p className="font-medium">{mentee.user.name}</p>
@@ -235,9 +219,7 @@ export default async function MentorDashboardPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-4 text-muted-foreground">
-                          {mentee.department}
-                        </td>
+                        <td className="px-4 py-4 text-muted-foreground">{mentee.department}</td>
                         <td className="px-4 py-4">
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 w-24 rounded-full bg-muted">
@@ -246,9 +228,7 @@ export default async function MentorDashboardPage() {
                                 style={{ width: `${progress}%` }}
                               />
                             </div>
-                            <span className="text-xs text-muted-foreground">
-                              {progress}%
-                            </span>
+                            <span className="text-xs text-muted-foreground">{progress}%</span>
                           </div>
                         </td>
                         <td className="px-4 py-4">
@@ -280,24 +260,14 @@ export default async function MentorDashboardPage() {
                             </Button>
                             {whatsapp && (
                               <Button size="icon" variant="ghost" asChild>
-                                
-                                  href={whatsapp}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  aria-label="WhatsApp"
-                                >
-                                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
-                                    <path d="M20.5 3.5A11 11 0 0 0 3 17.4L2 22l4.7-1a11 11 0 0 0 16.8-9.5c0-3-1.2-5.7-3-7.9Zm-8.4 16.9a9.1 9.1 0 0 1-4.6-1.3l-.3-.2-3.1.8.8-3-.2-.3a9.1 9.1 0 1 1 7.4 4Zm5-6.8c-.3-.1-1.6-.8-1.8-.9-.2-.1-.4-.1-.6.1-.2.3-.7.9-.8 1-.2.2-.3.2-.5.1a7.3 7.3 0 0 1-3.6-3.2c-.3-.5.3-.5.8-1.5.1-.2 0-.4 0-.5L9.6 7.2c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.3.3-1 1-1 2.4s1 2.8 1.2 3c.1.2 2 3.1 5 4.3.7.3 1.2.5 1.7.6.7.2 1.3.2 1.8.1.6-.1 1.6-.7 1.9-1.3.2-.6.2-1.1.2-1.2 0-.1-.2-.2-.5-.3Z" />
-                                  </svg>
+                                <a href={whatsapp} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp">
+                                  <Phone className="h-4 w-4" />
                                 </a>
                               </Button>
                             )}
                             <Button size="icon" variant="ghost" asChild>
                               <a href={`mailto:${mentee.user.email}`} aria-label="Email">
-                                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <rect x="3" y="5" width="18" height="14" rx="2" />
-                                  <path d="m3 7 9 6 9-6" />
-                                </svg>
+                                <Mail className="h-4 w-4" />
                               </a>
                             </Button>
                             <DropdownMenu>
@@ -328,8 +298,7 @@ export default async function MentorDashboardPage() {
       </Card>
 
       <p className="flex items-center justify-center gap-1.5 py-4 text-sm text-muted-foreground">
-        <span className="text-green">♥</span> Building confident students.
-        Stronger communities. Better futures.
+        <span className="text-green">♥</span> Building confident students. Stronger communities. Better futures.
       </p>
     </div>
   );
