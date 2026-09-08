@@ -9,7 +9,6 @@ import {
   ClipboardList,
   FileSpreadsheet,
   Flag,
-  GraduationCap,
   Handshake,
   Layers,
   LayoutDashboard,
@@ -23,8 +22,8 @@ import {
 } from "lucide-react";
 import type { Role } from "@prisma/client";
 import { cn } from "@/lib/utils";
-import { APP_NAME } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/logo";
 
 interface NavItem {
   href: string;
@@ -102,9 +101,7 @@ export function SidebarNavLinks({
           >
             <item.icon className={cn("h-4 w-4", active && "text-green")} />
             {item.label}
-            {active && (
-              <span className="ml-auto h-1.5 w-1.5 rounded-full bg-green" />
-            )}
+            {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-green" />}
           </Link>
         );
       })}
@@ -115,9 +112,8 @@ export function SidebarNavLinks({
 export function AppSidebar({ role }: { role: Role }) {
   return (
     <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col bg-navy text-white md:flex">
-      <div className="flex h-16 items-center gap-2 px-5 font-display font-bold">
-        <GraduationCap className="h-6 w-6 text-green" />
-        <span className="truncate">{APP_NAME}</span>
+      <div className="flex h-16 items-center px-5">
+        <Logo variant="markWhite" size={26} wordmarkClassName="text-white" />
       </div>
       <SidebarNavLinks role={role} />
       <div className="m-3 rounded-2xl bg-white/5 p-4">
