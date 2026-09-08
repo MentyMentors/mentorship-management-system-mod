@@ -1,11 +1,10 @@
 import Link from "next/link";
-import { CalendarDays, Mail, MessagesSquare, Phone, Users } from "lucide-react";
+import { ArrowRight, CalendarDays, MoreVertical, Plus, Users } from "lucide-react";
+import { differenceInCalendarWeeks } from "date-fns";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { buildWhatsAppLink, formatDate } from "@/lib/utils";
-import { PageHeader } from "@/components/layout/page-header";
-import { StatCard } from "@/components/stat-card";
-import { Badge } from "@/components/ui/badge";
+import { buildWhatsAppLink, formatDate, getInitials } from "@/lib/utils";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,9 +13,27 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { WeekStepper } from "@/components/dashboard/week-stepper";
+import { AnnouncementsCarousel } from "@/components/dashboard/announcements-carousel";
 
 export const metadata = { title: "Mentor dashboard" };
 export const dynamic = "force-dynamic";
+
+function programmeWeek(startDate: Date, endDate: Date) {
+  const totalWeeks = Math.max(
+    1,
+    differenceInCalendarWeeks(endDate, startDate) + 1
+  );
+  const rawWeek = differenceInCalendarWeeks(new Date(), startDate) + 1;
+  const currentWeek = Math.min(Math.max(rawWeek, 1), totalWeeks);
+  return { currentWeek, totalWeeks };
+}
 
 export default async function MentorDashboardPage() {
   const session = await auth();
@@ -29,12 +46,9 @@ export default async function MentorDashboardPage() {
         where: { status: "ACTIVE" },
         include: {
           menteeProfile: {
-            include: {
-              user: { select: { name: true, email: true, phone: true } },
-              interests: { include: { interest: true } },
-            },
+            include: { user: { select: { name: true, phone: true, email: true } } },
           },
-          meetings: { orderBy: { date: "desc" }, take: 1 },
+          meetings: { orderBy: { date: "desc" } },
         },
       },
     },
@@ -42,139 +56,281 @@ export default async function MentorDashboardPage() {
 
   if (!profile) {
     return (
-      <PageHeader
-        title="No mentor profile"
-        description="Your account has no mentor profile for the active semester. Contact an administrator."
-      />
+      <p className="text-muted-foreground">
+        Your account has no mentor profile for the active semester. Contact
+        an administrator.
+      </p>
     );
   }
 
-  const [meetingsCount, announcements] = await Promise.all([
-    db.meeting.count({
-      where: { pairing: { mentorProfileId: profile.id } },
-    }),
-    db.announcement.findMany({
-      where: { audience: { in: ["ALL", "MENTORS"] } },
-      orderBy: { createdAt: "desc" },
-      take: 3,
-    }),
-  ]);
+  const now = new Date();
+  const monthMeetingsCount = await db.meeting.count({
+    where: {
+      pairing: { mentorProfileId: profile.id },
+      date: { gte: new Date(now.getFullYear(), now.getMonth(), 1) },
+    },
+  });
+
+  const announcements = await db.announcement.findMany({
+    where: { audience: { in: ["ALL", "MENTORS"] } },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+
+  const { currentWeek, totalWeeks } = programmeWeek(
+    profile.semester.startDate,
+    profile.semester.endDate
+  );
 
   return (
-    <>
-      <PageHeader
-        title={`Welcome back, ${session!.user.name?.split(" ")[0]}`}
-        description={`${profile.semester.name} · ${profile.department}`}
-      >
-        <Button asChild>
-          <Link href="/mentor/meetings">
-            <CalendarDays className="h-4 w-4" /> Log a meeting
-          </Link>
-        </Button>
-      </PageHeader>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          title="Assigned mentees"
-          value={`${profile.pairings.length}/${profile.maxMentees}`}
-          icon={Users}
-        />
-        <StatCard title="Meetings logged" value={meetingsCount} icon={CalendarDays} />
-        <StatCard
-          title="Weekly availability"
-          value={`${profile.hoursPerWeek}h`}
-          icon={CalendarDays}
-        />
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="font-display text-2xl font-bold">
+            Good morning, {session!.user.name?.split(" ")[0]} 👋
+          </h1>
+          <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+            <span>Mentor</span>
+            <span className="rounded-full bg-green/15 px-2.5 py-0.5 text-xs font-medium text-green-deep">
+              Week {currentWeek} of {totalWeeks}
+            </span>
+          </div>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>My mentees</CardTitle>
-            <CardDescription>
-              Contact details and last meeting for each mentee.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {profile.pairings.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No mentees assigned yet — you will be notified by email when a
-                mentee is paired with you.
+      {/* CTA + stats */}
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr_1fr]">
+        <Link
+          href="/mentor/meetings"
+          className="group flex items-center justify-between rounded-2xl bg-navy p-6 text-white transition-shadow hover:shadow-glass-lg"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10">
+              <Plus className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="font-semibold">Log a meeting</p>
+              <p className="text-sm text-white/60">
+                Record your check-in with a mentee
               </p>
-            )}
-            {profile.pairings.map((pairing) => {
-              const mentee = pairing.menteeProfile;
-              const whatsapp = buildWhatsAppLink(mentee.user.phone);
-              return (
-                <div key={pairing.id} className="rounded-lg border p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium">{mentee.user.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {mentee.programme} · {mentee.department}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {mentee.interests.map((i) => (
-                          <Badge key={i.interestId} variant="secondary">
-                            {i.interest.name}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="outline" asChild>
-                        <a href={`mailto:${mentee.user.email}`}>
-                          <Mail className="h-4 w-4" />
-                        </a>
-                      </Button>
-                      {whatsapp && (
-                        <Button size="sm" variant="outline" asChild>
-                          <a href={whatsapp} target="_blank" rel="noopener noreferrer">
-                            <Phone className="h-4 w-4" />
-                          </a>
-                        </Button>
-                      )}
-                      <Button size="sm" variant="outline" asChild>
-                        <Link href="/messages">
-                          <MessagesSquare className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Last meeting:{" "}
-                    {pairing.meetings[0]
-                      ? `${formatDate(pairing.meetings[0].date)} — ${pairing.meetings[0].topics}`
-                      : "none logged yet"}
-                  </p>
-                </div>
-              );
-            })}
+            </div>
+          </div>
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-green text-navy transition-transform group-hover:translate-x-0.5">
+            <ArrowRight className="h-4 w-4" />
+          </span>
+        </Link>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
+              <Users className="h-4 w-4 text-primary" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">My mentees</p>
+            <p className="text-3xl font-bold">{profile.pairings.length}</p>
+            <p className="text-xs text-muted-foreground">Active mentees</p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Announcements</CardTitle>
+          <CardHeader className="pb-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary">
+              <CalendarDays className="h-4 w-4 text-primary" />
+            </div>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {announcements.length === 0 && (
-              <p className="text-sm text-muted-foreground">Nothing new.</p>
-            )}
-            {announcements.map((a) => (
-              <div key={a.id} className="rounded-md border p-3">
-                <p className="text-sm font-medium">{a.title}</p>
-                <p className="line-clamp-2 text-xs text-muted-foreground">
-                  {a.body}
-                </p>
-              </div>
-            ))}
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/announcements">View all</Link>
-            </Button>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Meetings this month</p>
+            <p className="text-3xl font-bold">{monthMeetingsCount}</p>
+            <p className="text-xs text-muted-foreground">Across all mentees</p>
           </CardContent>
         </Card>
       </div>
-    </>
+
+      {/* Progress + announcements */}
+      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle>Programme progress</CardTitle>
+            <span className="text-sm font-medium text-primary">
+              Week {currentWeek} of {totalWeeks}
+            </span>
+          </CardHeader>
+          <CardContent>
+            <WeekStepper currentWeek={currentWeek} totalWeeks={totalWeeks} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle>Announcements</CardTitle>
+            <Button variant="ghost" size="sm" className="h-auto p-0 text-primary" asChild>
+              <Link href="/announcements">
+                View all <ArrowRight className="h-3 w-3" />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <AnnouncementsCarousel announcements={announcements} />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Mentees table */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardTitle>My mentees</CardTitle>
+          <Button variant="ghost" size="sm" className="h-auto p-0 text-primary" asChild>
+            <Link href="/mentor/mentees">
+              View all <ArrowRight className="h-3 w-3" />
+            </Link>
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {profile.pairings.length === 0 ? (
+            <p className="p-6 text-sm text-muted-foreground">
+              No mentees assigned yet — you&apos;ll be notified by email as
+              soon as one is paired with you.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="px-6 py-3 font-medium">Mentee</th>
+                    <th className="px-4 py-3 font-medium">Department</th>
+                    <th className="px-4 py-3 font-medium">Progress</th>
+                    <th className="px-4 py-3 font-medium">Last meeting</th>
+                    <th className="px-4 py-3 font-medium">Next meeting</th>
+                    <th className="px-4 py-3 text-right font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profile.pairings.map((pairing) => {
+                    const mentee = pairing.menteeProfile;
+                    const meetings = pairing.meetings;
+                    const last = meetings.find((m) => m.date <= now);
+                    const next = [...meetings].reverse().find((m) => m.date > now);
+                    const progress = Math.min(
+                      100,
+                      Math.round((meetings.length / totalWeeks) * 100)
+                    );
+                    const whatsapp = buildWhatsAppLink(mentee.user.phone);
+
+                    return (
+                      <tr key={pairing.id} className="border-b last:border-0">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-9 w-9">
+                              <AvatarFallback>
+                                {getInitials(mentee.user.name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium">{mentee.user.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Reg. No. {mentee.registrationNumber}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 text-muted-foreground">
+                          {mentee.department}
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-2">
+                            <div className="h-1.5 w-24 rounded-full bg-muted">
+                              <div
+                                className="h-1.5 rounded-full bg-green"
+                                style={{ width: `${progress}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-muted-foreground">
+                              {progress}%
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4">
+                          {last ? (
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <CalendarDays className="h-3.5 w-3.5" />
+                              {formatDate(last.date)}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          {next ? (
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <CalendarDays className="h-3.5 w-3.5" />
+                              {formatDate(next.date)}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button size="icon" variant="ghost" asChild>
+                              <Link href="/mentor/meetings" aria-label="Log a meeting">
+                                <CalendarDays className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                            {whatsapp && (
+                              <Button size="icon" variant="ghost" asChild>
+                                
+                                  href={whatsapp}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  aria-label="WhatsApp"
+                                >
+                                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+                                    <path d="M20.5 3.5A11 11 0 0 0 3 17.4L2 22l4.7-1a11 11 0 0 0 16.8-9.5c0-3-1.2-5.7-3-7.9Zm-8.4 16.9a9.1 9.1 0 0 1-4.6-1.3l-.3-.2-3.1.8.8-3-.2-.3a9.1 9.1 0 1 1 7.4 4Zm5-6.8c-.3-.1-1.6-.8-1.8-.9-.2-.1-.4-.1-.6.1-.2.3-.7.9-.8 1-.2.2-.3.2-.5.1a7.3 7.3 0 0 1-3.6-3.2c-.3-.5.3-.5.8-1.5.1-.2 0-.4 0-.5L9.6 7.2c-.2-.5-.4-.4-.6-.4h-.5c-.2 0-.5.1-.7.3-.3.3-1 1-1 2.4s1 2.8 1.2 3c.1.2 2 3.1 5 4.3.7.3 1.2.5 1.7.6.7.2 1.3.2 1.8.1.6-.1 1.6-.7 1.9-1.3.2-.6.2-1.1.2-1.2 0-.1-.2-.2-.5-.3Z" />
+                                  </svg>
+                                </a>
+                              </Button>
+                            )}
+                            <Button size="icon" variant="ghost" asChild>
+                              <a href={`mailto:${mentee.user.email}`} aria-label="Email">
+                                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                                  <path d="m3 7 9 6 9-6" />
+                                </svg>
+                              </a>
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon" variant="ghost" aria-label="More">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem asChild>
+                                  <Link href="/messages">Message</Link>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem asChild>
+                                  <Link href="/mentor/mentees">View profile</Link>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <p className="flex items-center justify-center gap-1.5 py-4 text-sm text-muted-foreground">
+        <span className="text-green">♥</span> Building confident students.
+        Stronger communities. Better futures.
+      </p>
+    </div>
   );
 }
