@@ -20,13 +20,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { WeekStepper } from "@/components/dashboard/week-stepper";
 import { AnnouncementsCarousel } from "@/components/dashboard/announcements-carousel";
+import { differenceInCalendarDays } from "date-fns";
 
 export const metadata = { title: "Mentor dashboard" };
 export const dynamic = "force-dynamic";
 
 function programmeWeek(startDate: Date, endDate: Date) {
-  const totalWeeks = Math.max(1, differenceInCalendarWeeks(endDate, startDate) + 1);
-  const rawWeek = differenceInCalendarWeeks(new Date(), startDate) + 1;
+  const totalDays = Math.max(1, differenceInCalendarDays(endDate, startDate) + 1);
+  const totalWeeks = Math.max(1, Math.ceil(totalDays / 7));
+  const daysElapsed = differenceInCalendarDays(new Date(), startDate);
+  const rawWeek = Math.floor(daysElapsed / 7) + 1;
   const currentWeek = Math.min(Math.max(rawWeek, 1), totalWeeks);
   return { currentWeek, totalWeeks };
 }
@@ -142,12 +145,12 @@ export default async function MentorDashboardPage() {
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <Card>
-          <CardHeader className="flex-row items-center justify-between space-y-0">
-            <CardTitle>Programme progress</CardTitle>
-            <span className="text-sm font-medium text-primary">
-              Week {currentWeek} of {totalWeeks}
-            </span>
-          </CardHeader>
+         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+  <CardTitle>Program progress</CardTitle>
+  <span className="text-sm font-medium text-primary">
+    Week {currentWeek} of {totalWeeks}
+  </span>
+</CardHeader>
           <CardContent>
             <WeekStepper currentWeek={currentWeek} totalWeeks={totalWeeks} />
           </CardContent>
