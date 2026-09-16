@@ -1,6 +1,8 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const VISIBLE_WEEKS = 4;
+
 export function WeekStepper({
   currentWeek,
   totalWeeks,
@@ -8,10 +10,18 @@ export function WeekStepper({
   currentWeek: number;
   totalWeeks: number;
 }) {
-  const weeks = Array.from({ length: totalWeeks }, (_, i) => i + 1);
+  // Show at most VISIBLE_WEEKS beads, ending on the current week where
+  // possible — e.g. on week 5 that's weeks 2, 3, 4, 5. Keeps the strip a
+  // fixed, small width so it never forces the page to scroll or stretch.
+  const windowEnd = Math.min(totalWeeks, Math.max(currentWeek, VISIBLE_WEEKS));
+  const windowStart = Math.max(1, windowEnd - VISIBLE_WEEKS + 1);
+  const weeks = Array.from(
+    { length: windowEnd - windowStart + 1 },
+    (_, i) => windowStart + i
+  );
 
   return (
-    <div className="flex min-w-max items-start gap-2 overflow-x-auto pb-2">
+    <div className="flex items-start justify-center gap-2 sm:gap-3">
       {weeks.map((week, i) => {
         const done = week < currentWeek;
         const active = week === currentWeek;
@@ -20,7 +30,7 @@ export function WeekStepper({
             <div className="flex flex-col items-center gap-2">
               <div
                 className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-semibold transition-colors",
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 text-sm font-semibold transition-colors",
                   done && "border-green bg-green text-navy",
                   active && "border-navy bg-navy text-white dark:border-primary dark:bg-primary",
                   !done && !active && "border-border text-muted-foreground"
@@ -33,7 +43,7 @@ export function WeekStepper({
             {i < weeks.length - 1 && (
               <div
                 className={cn(
-                  "mx-1 h-0.5 w-8 rounded-full",
+                  "mx-1 h-0.5 w-6 shrink-0 rounded-full sm:w-10",
                   week < currentWeek ? "bg-green" : "bg-border"
                 )}
               />
