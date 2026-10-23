@@ -8,6 +8,14 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ---------------------------------------------------------------------------
+// STAGE 1 (this migration): the Role enum is RETAINED for backwards
+// compatibility. ADMIN means "platform administrator" (Super Admin).
+// MENTOR/MENTEE values are deprecated: programme participation now lives on
+// ProgramMembership. Stage 6 of the rollout removes MENTOR/MENTEE from this
+// enum after all reads/writes have moved to programme-scoped records.
+// ---------------------------------------------------------------------------
+
 enum Role {
   ADMIN
   MENTOR
@@ -21,8 +29,11 @@ enum UserStatus {
 }
 
 enum PairingStatus {
+  PROPOSED
   ACTIVE
   ENDED
+  CANCELLED
+  REASSIGNMENT_REQUIRED
 }
 
 enum Audience {
@@ -43,6 +54,61 @@ enum IssueStatus {
   RESOLVED
 }
 
+// ----- Multitenant enums (new) ---------------------------------------------
+
+enum InstitutionStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProgramStatus {
+  DRAFT
+  PUBLISHED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum ProgramRole {
+  MENTOR
+  MENTEE
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  WITHDRAWN
+  WAITLISTED
+}
+
+enum FormStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum FormFieldType {
+  SHORT_TEXT
+  LONG_TEXT
+  EMAIL
+  NUMBER
+  DROPDOWN
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  CHECKBOX
+  DATE
+}
+
 model User {
   id              String     @id @default(cuid())
   name            String
@@ -55,8 +121,8 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
-  mentorProfile   MentorProfile?
-  menteeProfile   MenteeProfile?
+  mentorProfiles   MentorProfile[]
+  menteeProfiles   MenteeProfile[]
   sentMessages     Message[]      @relation("SentMessages")
   receivedMessages Message[]      @relation("ReceivedMessages")
   announcements    Announcement[]
@@ -67,8 +133,190 @@ model User {
   issueReports        IssueReport[]
   auditLogs           AuditLog[]
 
+  // Multitenant relationships (new)
+  affiliations    InstitutionalAffiliation[]
+  memberships     ProgramMembership[]
+  coordinations   ProgramCoordinator[]
+  applications    ProgramApplication[]
+
   @@index([role, status])
   @@index([status])
+}
+
+model Institution {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  status    InstitutionStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  domains      InstitutionDomain[]
+  programs     MentorshipProgram[]
+  affiliations InstitutionalAffiliation[]
+}
+
+model InstitutionDomain {
+  id              String  @id @default(cuid())
+  institutionId   String
+  // Normalised: lowercase, no leading '@', no trailing dot. Exact host match.
+  domain          String  @unique
+  allowSubdomains Boolean @default(false)
+  isActive        Boolean @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId])
+}
+
+// A user may be affiliated with more than one institution over time.
+// Affiliation is verified by virtue of the email domain having passed
+// verification; it does NOT grant any programme role by itself.
+model InstitutionalAffiliation {
+  id            String   @id @default(cuid())
+  userId        String
+  institutionId String
+  email         String   // the verified email used to establish affiliation
+  isPrimary     Boolean  @default(false)
+  verifiedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, institutionId])
+  @@index([institutionId])
+}
+
+model MentorshipProgram {
+  id            String   @id @default(cuid())
+  institutionId String
+  name          String
+  description   String?
+  status        ProgramStatus @default(DRAFT)
+  // Configurable eligibility + matching preferences per programme (JSON is
+  // appropriate here: configurable policy, not core relationships).
+  eligibility         Json?
+  matchingPreferences Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  coordinators  ProgramCoordinator[]
+  memberships   ProgramMembership[]
+  semesters     Semester[]
+  forms         RegistrationForm[]
+  applications  ProgramApplication[]
+  announcements Announcement[]
+
+  @@unique([institutionId, name])
+  @@index([institutionId, status])
+}
+
+// Coordinator access is per-programme and explicit. A coordinator only ever
+// sees programmes listed here (plus platform-level Super Admin access).
+model ProgramCoordinator {
+  id           String   @id @default(cuid())
+  programId    String
+  userId       String
+  assignedById String?
+  createdAt    DateTime @default(now())
+
+  program    MentorshipProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, userId])
+  @@index([userId])
+}
+
+// THE core multitenant record: one account, many programme roles.
+// A user may hold MENTOR here for programme A and MENTEE for programme B
+// simultaneously. Authorization for programme data MUST check this table.
+model ProgramMembership {
+  id        String   @id @default(cuid())
+  programId String
+  userId    String
+  role      ProgramRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  program MentorshipProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // NOTE: uniqueness is per (program, user, role) — deliberately NOT per
+  // (program, user) — so nothing prevents different roles per programme.
+  @@unique([programId, userId, role])
+  @@index([userId, status])
+  @@index([programId, status])
+}
+
+model RegistrationForm {
+  id        String   @id @default(cuid())
+  programId String
+  role      ProgramRole      // separate mentor and mentee forms
+  name      String
+  status    FormStatus @default(DRAFT)
+  version   Int        @default(1)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  program      MentorshipProgram  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  questions    FormQuestion[]
+  applications ProgramApplication[]
+
+  @@unique([programId, role, version])
+}
+
+model FormQuestion {
+  id          String   @id @default(cuid())
+  formId      String
+  key         String
+  label       String
+  description String?
+  type        FormFieldType
+  required    Boolean @default(false)
+  options     Json?    // for DROPDOWN / *_CHOICE / CHECKBOX
+  validation  Json?    // min/max/length/pattern rules evaluated server-side
+  conditionalOn Json?  // { questionKey, equals } — evaluated server-side
+  order       Int
+
+  form RegistrationForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@unique([formId, key])
+  @@index([formId, order])
+}
+
+model ProgramApplication {
+  id           String   @id @default(cuid())
+  programId    String
+  userId       String
+  role         ProgramRole          // role the user is applying for
+  formId       String
+  formVersion  Int                  // immutable snapshot of the form used
+  answers      Json                 // response storage; validated server-side
+  status       ApplicationStatus @default(SUBMITTED)
+  reviewerId   String?
+  reviewedAt   DateTime?
+  adminNotes   String?
+  semesterId   String?              // optional cohort/intent reference
+  submittedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  program   MentorshipProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  form      RegistrationForm  @relation(fields: [formId], references: [id])
+  semester  Semester?         @relation(fields: [semesterId], references: [id])
+
+  // Partial unique ("no duplicate live application") cannot be expressed in
+  // Prisma; enforced transactionally in application code: reject a new
+  // application when one exists with status SUBMITTED/UNDER_REVIEW/APPROVED/
+  // WAITLISTED for (programId, userId, role).
+  @@index([programId, status, submittedAt])
+  @@index([userId, status])
 }
 
 model PasswordResetToken {
@@ -98,6 +346,9 @@ model EmailVerificationToken {
   @@index([expiresAt])
 }
 
+// Semester is retained as the COHORT table (it already carries cohort
+// semantics: dates, isActive, registrationOpen, isArchived). A nullable
+// programId is added in stage 1, backfilled, and made required in stage 6.
 model Semester {
   id               String   @id @default(cuid())
   name             String   @unique
@@ -106,21 +357,30 @@ model Semester {
   isActive         Boolean  @default(false)
   registrationOpen Boolean  @default(false)
   isArchived       Boolean  @default(false)
+  programId        String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  program MentorshipProgram? @relation(fields: [programId], references: [id])
 
   mentorProfiles MentorProfile[]
   menteeProfiles MenteeProfile[]
   pairings       Pairing[]
   announcements  Announcement[]
+  applications   ProgramApplication[]
 
   @@index([isActive])
   @@index([isArchived])
+  @@index([programId])
 }
 
+// The per-user unique constraint is REMOVED in stage 1: one account may now
+// hold a mentor profile in one programme/cohort and a mentee profile in
+// another. (Formerly @unique on userId — that single field was the global
+// MENTOR/MENTEE role in disguise.)
 model MentorProfile {
   id                 String   @id @default(cuid())
-  userId             String   @unique
+  userId             String
   semesterId         String
   registrationNumber String
   yearOfStudy        Int
@@ -139,13 +399,14 @@ model MentorProfile {
   pairings  Pairing[]
 
   @@unique([registrationNumber, semesterId])
+  @@index([userId])
   @@index([semesterId])
   @@index([department])
 }
 
 model MenteeProfile {
   id                      String    @id @default(cuid())
-  userId                  String    @unique
+  userId                  String
   semesterId              String
   registrationNumber      String
   programme               String
@@ -162,6 +423,7 @@ model MenteeProfile {
   pairings  Pairing[]
 
   @@unique([registrationNumber, semesterId])
+  @@index([userId])
   @@index([semesterId])
   @@index([department])
   @@index([waitlisted])
@@ -276,18 +538,22 @@ model IssueReport {
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  actorId    String
-  action     String
-  targetType String?
-  targetId   String?
-  metadata   Json?
-  createdAt  DateTime @default(now())
+  id           String   @id @default(cuid())
+  actorId      String
+  action       String
+  targetType   String?
+  targetId     String?
+  institutionId String?
+  programId    String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
 
   actor User @relation(fields: [actorId], references: [id])
 
   @@index([actorId, createdAt])
   @@index([action, createdAt])
+  @@index([institutionId, createdAt])
+  @@index([programId, createdAt])
 }
 
 model Message {
@@ -305,21 +571,27 @@ model Message {
   @@index([recipientId, readAt])
 }
 
+// Announcements gain programme scope (nullable in stage 1 for backwards
+// compatibility; stage 6 makes it required). Audience remains ALL/MENTORS/
+// MENTEES but is always evaluated within the programme scope.
 model Announcement {
   id          String   @id @default(cuid())
   title       String
   body        String
   audience    Audience @default(ALL)
   semesterId  String?
+  programId   String?
   createdById String
   emailSent   Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  semester  Semester? @relation(fields: [semesterId], references: [id])
-  createdBy User      @relation(fields: [createdById], references: [id])
+  semester  Semester?        @relation(fields: [semesterId], references: [id])
+  program   MentorshipProgram? @relation(fields: [programId], references: [id])
+  createdBy User             @relation(fields: [createdById], references: [id])
 
   @@index([audience, createdAt])
   @@index([semesterId])
+  @@index([programId, createdAt])
 }
 
 model Notification {
