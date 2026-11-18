@@ -29,6 +29,18 @@ describe("prisma migrations", () => {
     expect(code).not.toMatch(/^\s*\\[a-z]/m); // \set, \i, \echo ...
   });
 
+  // An explicit BEGIN/COMMIT hides the real error when a statement fails:
+  // the connection stays in an aborted transaction and Prisma can only
+  // report "current transaction is aborted" (Nov 2026 Phase 2 deploy).
+  // PostgreSQL already applies a multi-statement migration atomically.
+  const GRANDFATHERED = new Set(["20261023000000_multitenant_core"]);
+  it.each(migrationFiles.filter((m) => !GRANDFATHERED.has(m.name)))(
+    "$name has no explicit transaction control",
+    ({ sql }) => {
+      expect(withoutComments(sql)).not.toMatch(/^\s*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)\s*;/im);
+    }
+  );
+
   it("never deletes rows", () => {
     for (const { name, sql } of migrationFiles) {
       expect(withoutComments(sql), name).not.toMatch(/\bDELETE\s+FROM\b|\bTRUNCATE\b/i);

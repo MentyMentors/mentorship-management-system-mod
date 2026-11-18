@@ -1,28 +1,28 @@
 -- ============================================================================
 -- Phase 2: programme creation and customisation.
--- Expand-only: new enums, tables and nullable columns. No data is changed
--- except seeding a DRAFT and PUBLISHED theme row for every existing programme
--- (Menty's default colours), and one platform setting.
+--
+-- Expand-only: new enums, tables and nullable columns, plus a default theme
+-- for every existing programme and one platform setting.
+--
+-- No explicit BEGIN/COMMIT: PostgreSQL applies a multi-statement migration
+-- atomically on its own, and if a statement fails Prisma can then record the
+-- real error. Every statement is also safe to re-run.
+-- (The new "USER" account type is added by 20261118000100_role_user.)
 -- ============================================================================
 
-BEGIN;
-
-ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'USER';
-
-CREATE TYPE "ThemeVariant" AS ENUM ('DRAFT', 'PUBLISHED');
-CREATE TYPE "Appearance" AS ENUM ('LIGHT', 'DARK', 'SYSTEM');
-CREATE TYPE "TransferStatus" AS ENUM ('REQUESTED', 'ACCEPTED', 'DECLINED', 'CANCELLED');
+DO $$ BEGIN CREATE TYPE "ThemeVariant" AS ENUM ('DRAFT', 'PUBLISHED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "Appearance" AS ENUM ('LIGHT', 'DARK', 'SYSTEM'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE "TransferStatus" AS ENUM ('REQUESTED', 'ACCEPTED', 'DECLINED', 'CANCELLED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Institution registration requests
-ALTER TABLE "Institution" ADD COLUMN "coverImageUrl" TEXT;
-ALTER TABLE "Institution" ADD COLUMN "requestedById" TEXT;
-ALTER TABLE "Institution" ADD COLUMN "contactName" TEXT;
-ALTER TABLE "Institution" ADD COLUMN "contactEmail" TEXT;
-ALTER TABLE "Institution" ADD COLUMN "requestNote" TEXT;
-ALTER TABLE "Institution" ADD CONSTRAINT "Institution_requestedById_fkey"
-  FOREIGN KEY ("requestedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Institution" ADD COLUMN IF NOT EXISTS "coverImageUrl" TEXT;
+ALTER TABLE "Institution" ADD COLUMN IF NOT EXISTS "requestedById" TEXT;
+ALTER TABLE "Institution" ADD COLUMN IF NOT EXISTS "contactName" TEXT;
+ALTER TABLE "Institution" ADD COLUMN IF NOT EXISTS "contactEmail" TEXT;
+ALTER TABLE "Institution" ADD COLUMN IF NOT EXISTS "requestNote" TEXT;
+ALTER TABLE "MentorshipProgram" ADD COLUMN IF NOT EXISTS "contactEmail" TEXT;
 
-CREATE TABLE "InstitutionTheme" (
+CREATE TABLE IF NOT EXISTS "InstitutionTheme" (
     "id" TEXT NOT NULL,
     "institutionId" TEXT NOT NULL,
     "variant" "ThemeVariant" NOT NULL DEFAULT 'PUBLISHED',
@@ -32,11 +32,9 @@ CREATE TABLE "InstitutionTheme" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "InstitutionTheme_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX "InstitutionTheme_institutionId_variant_key" ON "InstitutionTheme"("institutionId", "variant");
-ALTER TABLE "InstitutionTheme" ADD CONSTRAINT "InstitutionTheme_institutionId_fkey"
-  FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS "InstitutionTheme_institutionId_variant_key" ON "InstitutionTheme"("institutionId", "variant");
 
-CREATE TABLE "ProgramTheme" (
+CREATE TABLE IF NOT EXISTS "ProgramTheme" (
     "id" TEXT NOT NULL,
     "programId" TEXT NOT NULL,
     "variant" "ThemeVariant" NOT NULL DEFAULT 'PUBLISHED',
@@ -60,11 +58,9 @@ CREATE TABLE "ProgramTheme" (
       "backgroundColor" ~ '^#[0-9a-f]{6}$' AND "foregroundColor" ~ '^#[0-9a-f]{6}$'
     )
 );
-CREATE UNIQUE INDEX "ProgramTheme_programId_variant_key" ON "ProgramTheme"("programId", "variant");
-ALTER TABLE "ProgramTheme" ADD CONSTRAINT "ProgramTheme_programId_fkey"
-  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS "ProgramTheme_programId_variant_key" ON "ProgramTheme"("programId", "variant");
 
-CREATE TABLE "AdminInvite" (
+CREATE TABLE IF NOT EXISTS "AdminInvite" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "roleId" TEXT NOT NULL,
@@ -84,20 +80,12 @@ CREATE TABLE "AdminInvite" (
       ("scopeType" = 'PROGRAM'     AND "institutionId" IS NULL     AND "programId" IS NOT NULL)
     )
 );
-CREATE UNIQUE INDEX "AdminInvite_tokenHash_key" ON "AdminInvite"("tokenHash");
-CREATE INDEX "AdminInvite_email_idx" ON "AdminInvite"("email");
-CREATE INDEX "AdminInvite_programId_idx" ON "AdminInvite"("programId");
-CREATE INDEX "AdminInvite_institutionId_idx" ON "AdminInvite"("institutionId");
-ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_roleId_fkey"
-  FOREIGN KEY ("roleId") REFERENCES "AdminRole"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_institutionId_fkey"
-  FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_programId_fkey"
-  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_createdById_fkey"
-  FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+CREATE UNIQUE INDEX IF NOT EXISTS "AdminInvite_tokenHash_key" ON "AdminInvite"("tokenHash");
+CREATE INDEX IF NOT EXISTS "AdminInvite_email_idx" ON "AdminInvite"("email");
+CREATE INDEX IF NOT EXISTS "AdminInvite_programId_idx" ON "AdminInvite"("programId");
+CREATE INDEX IF NOT EXISTS "AdminInvite_institutionId_idx" ON "AdminInvite"("institutionId");
 
-CREATE TABLE "ProgramTransfer" (
+CREATE TABLE IF NOT EXISTS "ProgramTransfer" (
     "id" TEXT NOT NULL,
     "programId" TEXT NOT NULL,
     "toInstitutionId" TEXT NOT NULL,
@@ -109,17 +97,33 @@ CREATE TABLE "ProgramTransfer" (
     "decidedAt" TIMESTAMP(3),
     CONSTRAINT "ProgramTransfer_pkey" PRIMARY KEY ("id")
 );
-CREATE INDEX "ProgramTransfer_programId_status_idx" ON "ProgramTransfer"("programId", "status");
-CREATE INDEX "ProgramTransfer_toInstitutionId_status_idx" ON "ProgramTransfer"("toInstitutionId", "status");
+CREATE INDEX IF NOT EXISTS "ProgramTransfer_programId_status_idx" ON "ProgramTransfer"("programId", "status");
+CREATE INDEX IF NOT EXISTS "ProgramTransfer_toInstitutionId_status_idx" ON "ProgramTransfer"("toInstitutionId", "status");
 -- At most one open transfer request per programme.
-CREATE UNIQUE INDEX "ProgramTransfer_one_open_per_program"
+CREATE UNIQUE INDEX IF NOT EXISTS "ProgramTransfer_one_open_per_program"
   ON "ProgramTransfer"("programId") WHERE "status" = 'REQUESTED';
-ALTER TABLE "ProgramTransfer" ADD CONSTRAINT "ProgramTransfer_programId_fkey"
-  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "ProgramTransfer" ADD CONSTRAINT "ProgramTransfer_toInstitutionId_fkey"
-  FOREIGN KEY ("toInstitutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
-ALTER TABLE "MentorshipProgram" ADD COLUMN "contactEmail" TEXT;
+-- Foreign keys (added only if missing)
+DO $$
+DECLARE fk RECORD;
+BEGIN
+  FOR fk IN SELECT * FROM (VALUES
+    ('Institution', 'Institution_requestedById_fkey', 'ALTER TABLE "Institution" ADD CONSTRAINT "Institution_requestedById_fkey" FOREIGN KEY ("requestedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE'),
+    ('InstitutionTheme', 'InstitutionTheme_institutionId_fkey', 'ALTER TABLE "InstitutionTheme" ADD CONSTRAINT "InstitutionTheme_institutionId_fkey" FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE'),
+    ('ProgramTheme', 'ProgramTheme_programId_fkey', 'ALTER TABLE "ProgramTheme" ADD CONSTRAINT "ProgramTheme_programId_fkey" FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE'),
+    ('AdminInvite', 'AdminInvite_roleId_fkey', 'ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_roleId_fkey" FOREIGN KEY ("roleId") REFERENCES "AdminRole"("id") ON DELETE CASCADE ON UPDATE CASCADE'),
+    ('AdminInvite', 'AdminInvite_institutionId_fkey', 'ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_institutionId_fkey" FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE'),
+    ('AdminInvite', 'AdminInvite_programId_fkey', 'ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_programId_fkey" FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE'),
+    ('AdminInvite', 'AdminInvite_createdById_fkey', 'ALTER TABLE "AdminInvite" ADD CONSTRAINT "AdminInvite_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE'),
+    ('ProgramTransfer', 'ProgramTransfer_programId_fkey', 'ALTER TABLE "ProgramTransfer" ADD CONSTRAINT "ProgramTransfer_programId_fkey" FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE'),
+    ('ProgramTransfer', 'ProgramTransfer_toInstitutionId_fkey', 'ALTER TABLE "ProgramTransfer" ADD CONSTRAINT "ProgramTransfer_toInstitutionId_fkey" FOREIGN KEY ("toInstitutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE')
+  ) AS t(tbl, name, ddl)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = fk.name) THEN
+      EXECUTE fk.ddl;
+    END IF;
+  END LOOP;
+END $$;
 
 -- Every existing programme starts with Menty's default theme.
 INSERT INTO "ProgramTheme" ("id", "programId", "variant", "updatedAt")
@@ -132,5 +136,3 @@ INSERT INTO "PlatformSetting" ("key", "value", "description", "updatedAt") VALUE
    'When "true", independent programmes must be verified by Menty before they can be published publicly.',
    CURRENT_TIMESTAMP)
 ON CONFLICT ("key") DO NOTHING;
-
-COMMIT;
