@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   Flag,
   Handshake,
+  Building2,
   Layers,
   LayoutDashboard,
   LifeBuoy,
@@ -44,6 +45,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/admin/analytics", label: "Reports", icon: BarChart3 },
     { href: "/admin/issues", label: "Issue reports", icon: Flag },
     { href: "/admin/audit-log", label: "Audit log", icon: ScrollText },
+    { href: "/manage", label: "Programmes", icon: Building2 },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/search", label: "Search", icon: Search },
   ],
@@ -53,6 +55,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/mentor/meetings", label: "Meetings", icon: CalendarDays },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/announcements", label: "Programme", icon: ClipboardList },
+    { href: "/manage", label: "Run a programme", icon: Building2 },
     { href: "/issues", label: "Report Issue", icon: BookOpen },
     { href: "/profile", label: "Settings", icon: Settings },
   ],
@@ -61,6 +64,13 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/mentee/meetings", label: "Meetings", icon: CalendarDays },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/announcements", label: "Programme", icon: ClipboardList },
+    { href: "/manage", label: "Run a programme", icon: Building2 },
+    { href: "/issues", label: "Report Issue", icon: BookOpen },
+    { href: "/profile", label: "Settings", icon: Settings },
+  ],
+  USER: [
+    { href: "/manage", label: "My programmes", icon: Building2 },
+    { href: "/announcements", label: "Announcements", icon: ClipboardList },
     { href: "/issues", label: "Report Issue", icon: BookOpen },
     { href: "/profile", label: "Settings", icon: Settings },
   ],
@@ -84,6 +94,7 @@ export function SidebarNavLinks({
         const active =
           pathname === item.href ||
           (item.href !== "/admin" &&
+            item.href !== "/manage" &&
             item.href !== "/mentor" &&
             item.href !== "/mentee" &&
             pathname.startsWith(item.href));

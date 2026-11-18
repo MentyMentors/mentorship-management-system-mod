@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import {
   AuthorizationError,
+  requireActor,
   requireDefaultProgramPermission,
   requirePlatformPermission,
   type AuthorizedContext,
@@ -33,4 +34,14 @@ export function programPage(permission: Permission): Promise<ProgramContext> {
 /** Platform administration page. */
 export function platformPage(permission: Permission): Promise<AuthorizedContext> {
   return guard(() => requirePlatformPermission(permission));
+}
+
+/** Any signed-in, approved user (with their permissions loaded). */
+export function signedInPage(): Promise<AuthorizedContext> {
+  return guard(() => requireActor());
+}
+
+/** Runs a check that may throw AuthorizationError; 404s on denial. */
+export function orNotFound<T>(check: () => Promise<T>): Promise<T> {
+  return guard(check);
 }

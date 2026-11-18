@@ -33,3 +33,10 @@ export function generateResetToken(): GeneratedToken {
 export function generateVerificationToken(): GeneratedToken {
   return generateToken(VERIFICATION_TOKEN_TTL_MS);
 }
+
+const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/** Single-use invitation to a programme or institution role. */
+export function generateInviteToken(): GeneratedToken {
+  return generateToken(INVITE_TOKEN_TTL_MS);
+}

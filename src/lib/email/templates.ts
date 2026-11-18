@@ -217,3 +217,59 @@ export function bulkEmail(subject: string, body: string) {
     .join("");
   return { subject, html: layout(subject, paragraphs) };
 }
+
+/** Someone with no Menty account has been invited to a programme or institution role. */
+export function roleInviteEmail(input: {
+  inviterName: string;
+  roleName: string;
+  targetName: string;
+  acceptUrl: string;
+}) {
+  return {
+    subject: `${APP_NAME}: You're invited to help run ${input.targetName}`,
+    html: layout(
+      "You're invited",
+      `<p>${escapeHtml(input.inviterName)} has invited you to join <strong>${escapeHtml(input.targetName)}</strong> on ${escapeHtml(APP_NAME)} as <strong>${escapeHtml(input.roleName)}</strong>.</p>
+       <p>Accept the invitation to set up your account. The link works once and expires in 7 days.</p>
+       ${button(input.acceptUrl, "Accept invitation")}`
+    ),
+  };
+}
+
+/** An existing user has been given a programme or institution role. */
+export function roleGrantedEmail(input: {
+  name: string;
+  roleName: string;
+  targetName: string;
+  manageUrl: string;
+}) {
+  return {
+    subject: `${APP_NAME}: You are now ${input.roleName} of ${input.targetName}`,
+    html: layout(
+      "New role",
+      `<p>Hi ${escapeHtml(input.name)},</p>
+       <p>You have been made <strong>${escapeHtml(input.roleName)}</strong> of <strong>${escapeHtml(input.targetName)}</strong>.</p>
+       ${button(input.manageUrl, "Open")}`
+    ),
+  };
+}
+
+/** Outcome of an institution registration request. */
+export function institutionDecisionEmail(input: {
+  name: string;
+  institutionName: string;
+  approved: boolean;
+}) {
+  return {
+    subject: `${APP_NAME}: ${input.institutionName} ${input.approved ? "approved" : "registration update"}`,
+    html: layout(
+      input.approved ? "Institution approved" : "Institution registration",
+      input.approved
+        ? `<p>Hi ${escapeHtml(input.name)},</p>
+           <p><strong>${escapeHtml(input.institutionName)}</strong> is now on ${escapeHtml(APP_NAME)}, and you are its administrator. You can create programmes and appoint coordinators.</p>
+           ${button(`${APP_URL}/manage`, "Open Menty")}`
+        : `<p>Hi ${escapeHtml(input.name)},</p>
+           <p>We could not approve the registration of <strong>${escapeHtml(input.institutionName)}</strong> at this time. Reply to this email if you would like to discuss it.</p>`
+    ),
+  };
+}

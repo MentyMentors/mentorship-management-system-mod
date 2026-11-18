@@ -1,7 +1,12 @@
+import { Suspense } from "react";
 import { LoginForm } from "@/components/forms/login-form";
 
 export const metadata = { title: "Log in" };
 
 export default function LoginPage() {
-  return <LoginForm />;
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
 }

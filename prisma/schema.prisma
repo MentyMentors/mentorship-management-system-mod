@@ -28,6 +28,9 @@ enum Role {
   ADMIN
   MENTOR
   MENTEE
+  /// Accounts created after Phase 1 that are not legacy mentors/mentees
+  /// (coordinators, institution staff, invited people).
+  USER
 }
 
 enum UserStatus {
@@ -128,6 +131,24 @@ enum ProgramRole {
   PARTICIPANT
 }
 
+enum ThemeVariant {
+  DRAFT
+  PUBLISHED
+}
+
+enum Appearance {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+enum TransferStatus {
+  REQUESTED
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
 enum MembershipStatus {
   PENDING
   ACTIVE
@@ -165,6 +186,8 @@ model User {
   issueReports            IssueReport[]
   auditLogs               AuditLog[]
 
+  invitesCreated         AdminInvite[]           @relation("InviteCreatedBy")
+  requestedInstitutions  Institution[]           @relation("InstitutionRequester")
   roleAssignments        RoleAssignment[]        @relation("AssignmentSubject")
   grantedAssignments     RoleAssignment[]        @relation("AssignmentGrantedBy")
   institutionMemberships InstitutionMembership[]
@@ -192,6 +215,33 @@ model AdminRole {
   updatedAt     DateTime    @updatedAt
 
   assignments RoleAssignment[]
+  invites     AdminInvite[]
+}
+
+/// Single-use invitation to take a role (e.g. programme coordinator) for an
+/// email address that has no Menty account yet. Stored hashed.
+model AdminInvite {
+  id            String    @id @default(cuid())
+  email         String
+  roleId        String
+  scopeType     ScopeType
+  institutionId String?
+  programId     String?
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  acceptedAt    DateTime?
+  revokedAt     DateTime?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+
+  role        AdminRole          @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  institution Institution?       @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  program     MentorshipProgram? @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdBy   User?              @relation("InviteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([programId])
+  @@index([institutionId])
 }
 
 /// Grants a role to a user at one scope. PLATFORM: both ids null.
@@ -232,17 +282,41 @@ model Institution {
   description        String?
   websiteUrl         String?
   logoUrl            String?
+  coverImageUrl      String?
   country            String             @default("Malawi")
+  /// Registration request (public "register an institution" flow).
+  requestedById      String?
+  contactName        String?
+  contactEmail       String?
+  requestNote        String?
   status             InstitutionStatus  @default(PENDING_VERIFICATION)
   verificationStatus VerificationStatus @default(UNVERIFIED)
   verifiedAt         DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
+  requestedBy User?                   @relation("InstitutionRequester", fields: [requestedById], references: [id], onDelete: SetNull)
   domains     InstitutionDomain[]
   members     InstitutionMembership[]
   programs    MentorshipProgram[]
   assignments RoleAssignment[]
+  themes      InstitutionTheme[]
+  invites     AdminInvite[]
+  transfersIn ProgramTransfer[]
+}
+
+model InstitutionTheme {
+  id             String       @id @default(cuid())
+  institutionId  String
+  variant        ThemeVariant @default(PUBLISHED)
+  primaryColor   String       @default("#00727a")
+  secondaryColor String       @default("#272754")
+  accentColor    String       @default("#8fdd36")
+  updatedAt      DateTime     @updatedAt
+
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@unique([institutionId, variant])
 }
 
 /// Verifies institutional affiliation by email domain. Never a gate on who may
@@ -293,6 +367,8 @@ model MentorshipProgram {
   category             String?
   targetAudience       String?
   welcomeMessage       String?
+  /// Public contact address; also the Reply-To on programme emails (Phase 8).
+  contactEmail         String?
   ownerType            ProgramOwnerType
   institutionId        String?
   ownerUserId          String?
@@ -329,10 +405,57 @@ model MentorshipProgram {
   announcements Announcement[]
   pairings      Pairing[]
   meetings      Meeting[]
+  themes        ProgramTheme[]
+  invites       AdminInvite[]
+  transfers     ProgramTransfer[]
 
   @@index([status, visibility])
   @@index([institutionId, status])
   @@index([ownerType])
+}
+
+/// A programme's visual identity. At most two rows: PUBLISHED (what
+/// participants see) and DRAFT (what the branding editor works on).
+/// Rendered as --program-* CSS custom properties; see src/lib/theme.
+model ProgramTheme {
+  id                String       @id @default(cuid())
+  programId         String
+  variant           ThemeVariant @default(PUBLISHED)
+  primaryColor      String       @default("#00727a")
+  primaryContrast   String       @default("#ffffff")
+  secondaryColor    String       @default("#272754")
+  secondaryContrast String       @default("#ffffff")
+  accentColor       String       @default("#8fdd36")
+  accentContrast    String       @default("#272754")
+  backgroundColor   String       @default("#f7f9fa")
+  foregroundColor   String       @default("#1a1b28")
+  radius            String       @default("0.75rem")
+  appearance        Appearance   @default(SYSTEM)
+  updatedAt         DateTime     @updatedAt
+
+  program MentorshipProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, variant])
+}
+
+/// Audited hand-over of an independent programme to an institution.
+/// Participants and history stay put: only ownership changes.
+model ProgramTransfer {
+  id              String         @id @default(cuid())
+  programId       String
+  toInstitutionId String
+  requestedById   String
+  decidedById     String?
+  status          TransferStatus @default(REQUESTED)
+  note            String?
+  createdAt       DateTime       @default(now())
+  decidedAt       DateTime?
+
+  program       MentorshipProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  toInstitution Institution       @relation(fields: [toInstitutionId], references: [id], onDelete: Cascade)
+
+  @@index([programId, status])
+  @@index([toInstitutionId, status])
 }
 
 /// One row per (programme, user, role). The same account may be MENTEE in one

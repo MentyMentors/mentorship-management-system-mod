@@ -50,6 +50,17 @@
 
     --radius: 1rem;
 
+    /* Programme theme defaults = Menty brand (overridden by ProgramThemeScope) */
+    --program-primary: #00727a;
+    --program-primary-foreground: #ffffff;
+    --program-secondary: #272754;
+    --program-secondary-foreground: #ffffff;
+    --program-accent: #8fdd36;
+    --program-accent-foreground: #272754;
+    --program-background: #f7f9fa;
+    --program-foreground: #1a1b28;
+    --program-radius: 0.75rem;
+
     /* Apple-style frosted glass surface */
     --glass-bg: 0 0% 100%;
     --glass-border: 0 0% 100%;

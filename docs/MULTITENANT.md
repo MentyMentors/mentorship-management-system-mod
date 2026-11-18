@@ -1,7 +1,7 @@
 # Menty multi-tenancy — developer guide
 
-Status: **Phase 1 (foundation) implemented.** Design: `docs/phase-0/`. Deployment:
-`docs/phase-1/DEPLOY.md`.
+Status: **Phases 1–2 implemented** (foundation; programme creation and customisation).
+Design: `docs/phase-0/`. Deployment: `docs/phase-1/DEPLOY.md`. Phase 2: `docs/phase-2/README.md`.
 
 ## The model in one paragraph
 
@@ -30,7 +30,9 @@ mentor/mentee dashboards until Phase 3, and is never used to authorise administr
 5. Creating a mentor/mentee profile? Call `upsertMembership()` in the same transaction.
 6. Changing someone's status or roles? Call `bumpSessionVersion(userId)` so their open sessions
    pick it up on the next request.
-7. Audit entries carry `programId` / `institutionId`; secrets in metadata are redacted.
+7. Business-rule failures throw `RequestError(status, message)` (rendered by `errorResponse`).
+   Programme/institution logic lives in `src/services/` (programs, institutions, staff); routes stay thin.
+8. Audit entries carry `programId` / `institutionId`; secrets in metadata are redacted.
 
 ## Tests
 

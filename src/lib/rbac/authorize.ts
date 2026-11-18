@@ -54,6 +54,17 @@ export class AuthorizationError extends Error {
   }
 }
 
+/**
+ * A business-rule failure with an HTTP status (409 conflict, 422 invalid...).
+ * Subclass of AuthorizationError so errorResponse() renders it the same way.
+ */
+export class RequestError extends AuthorizationError {
+  constructor(status: number, message: string) {
+    super(status, message);
+    this.name = "RequestError";
+  }
+}
+
 function assignmentCoversScope(
   assignment: ActorAssignment,
   scope: ResourceScope

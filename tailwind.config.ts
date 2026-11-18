@@ -61,6 +61,18 @@ const config: Config = {
           foreground: "hsl(var(--warning-foreground))",
         },
         navy: "hsl(var(--navy))",
+        // Per-programme theme (src/lib/theme/tokens.ts). Defaults to Menty's
+        // brand outside a programme; ProgramThemeScope overrides inside one.
+        program: {
+          primary: "var(--program-primary)",
+          "primary-foreground": "var(--program-primary-foreground)",
+          secondary: "var(--program-secondary)",
+          "secondary-foreground": "var(--program-secondary-foreground)",
+          accent: "var(--program-accent)",
+          "accent-foreground": "var(--program-accent-foreground)",
+          background: "var(--program-background)",
+          foreground: "var(--program-foreground)",
+        },
         teal: {
           DEFAULT: "hsl(var(--teal))",
           deep: "hsl(var(--teal-deep))",
@@ -75,6 +87,7 @@ const config: Config = {
         },
       },
       borderRadius: {
+        program: "var(--program-radius)",
         lg: "var(--radius)",
         md: "calc(var(--radius) - 4px)",
         sm: "calc(var(--radius) - 8px)",

@@ -13,6 +13,8 @@ export default async function RedirectPage() {
       redirect("/admin");
     case "MENTOR":
       redirect("/mentor");
+    case "USER":
+      redirect("/manage");
     default:
       redirect("/mentee");
   }
