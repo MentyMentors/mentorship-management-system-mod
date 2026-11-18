@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeRoleInProgram,
+  activeRolesInProgram,
   canActAs,
   canMentorInProgram,
   pairingScopeValid,
@@ -22,8 +22,8 @@ const dualRoleUser: MembershipLike[] = [
 
 describe("one account, multiple programme roles", () => {
   it("user can be MENTEE in programme A and MENTOR in programme B", () => {
-    expect(activeRoleInProgram(dualRoleUser, PROG_A)).toBe("MENTEE");
-    expect(activeRoleInProgram(dualRoleUser, PROG_B)).toBe("MENTOR");
+    expect(activeRolesInProgram(dualRoleUser, PROG_A)).toEqual(["MENTEE"]);
+    expect(activeRolesInProgram(dualRoleUser, PROG_B)).toEqual(["MENTOR"]);
   });
 
   it("role in one programme does not leak into another", () => {
@@ -38,11 +38,21 @@ describe("one account, multiple programme roles", () => {
       { programId: PROG_A, role: "MENTOR", status: "SUSPENDED" },
     ];
     expect(canMentorInProgram(suspended, PROG_A)).toBe(false);
-    expect(activeRoleInProgram(suspended, PROG_A)).toBeNull();
+    expect(activeRolesInProgram(suspended, PROG_A)).toEqual([]);
   });
 
   it("no membership, no access", () => {
-    expect(activeRoleInProgram([], PROG_A)).toBeNull();
+    expect(activeRolesInProgram([], PROG_A)).toEqual([]);
+  });
+
+  it("user can hold several roles in the same programme", () => {
+    const both: MembershipLike[] = [
+      { programId: PROG_A, role: "MENTOR", status: "ACTIVE" },
+      { programId: PROG_A, role: "PRESENTER", status: "ACTIVE" },
+    ];
+    expect(canActAs(both, PROG_A, "MENTOR")).toBe(true);
+    expect(canActAs(both, PROG_A, "PRESENTER")).toBe(true);
+    expect(canActAs(both, PROG_A, "MENTEE")).toBe(false);
   });
 });
 

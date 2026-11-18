@@ -1,17 +1,18 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
+import { assertInProgram } from "@/lib/rbac/scope";
 import { announcementSendChunkSchema } from "@/lib/validators";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendBulkMail } from "@/lib/email/mailer";
 import { announcementEmail } from "@/lib/email/templates";
 import { logAudit } from "@/lib/audit";
-import type { Role } from "@prisma/client";
+import type { ProgramRole } from "@prisma/client";
 
 // Mirrors /api/admin/bulk-email's chunking — see that route for why.
 export const maxDuration = 60;
 const CHUNK_SIZE = 15;
 
-function audienceRoles(audience: "ALL" | "MENTORS" | "MENTEES"): Role[] {
+function audienceRoles(audience: "ALL" | "MENTORS" | "MENTEES"): ProgramRole[] {
   if (audience === "MENTORS") return ["MENTOR"];
   if (audience === "MENTEES") return ["MENTEE"];
   return ["MENTOR", "MENTEE"];
@@ -23,7 +24,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.EMAIL_SEND);
     const { id } = await params;
 
     // CHUNK_SIZE recipients per request — 150 requests/hr gives a ceiling
@@ -48,16 +49,21 @@ export async function POST(
     }
 
     const announcement = await db.announcement.findUnique({ where: { id } });
-    if (!announcement) {
-      return Response.json({ error: "Announcement not found" }, { status: 404 });
-    }
+    assertInProgram(announcement, scope, "Announcement");
 
     const { offset, runningSent, runningFailed, runningFailedEmails } = parsed.data;
 
     const allRecipients = await db.user.findMany({
+      // Active members of this programme in the audience's roles.
       where: {
         status: "APPROVED",
-        role: { in: audienceRoles(announcement.audience) },
+        memberships: {
+          some: {
+            programId: scope.programId,
+            status: "ACTIVE",
+            role: { in: audienceRoles(announcement.audience) },
+          },
+        },
       },
       select: { email: true },
       orderBy: { id: "asc" },
@@ -85,6 +91,8 @@ export async function POST(
     if (done) {
       await logAudit({
         actorId: session.user.id,
+        programId: scope.programId,
+        institutionId: scope.institutionId,
         action: "announcement.email_sent",
         targetType: "Announcement",
         targetId: announcement.id,

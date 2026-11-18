@@ -71,7 +71,11 @@ export default async function MentorDashboardPage() {
   });
 
   const announcements = await db.announcement.findMany({
-    where: { audience: { in: ["ALL", "MENTORS"] } },
+    // This programme's announcements, plus platform-wide ones.
+    where: {
+      audience: { in: ["ALL", "MENTORS"] },
+      OR: [{ programId: profile.semester.programId }, { programId: null }],
+    },
     orderBy: { createdAt: "desc" },
     take: 5,
   });

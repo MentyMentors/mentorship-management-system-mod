@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
+import { assertInProgram } from "@/lib/rbac/scope";
 import { semesterActionSchema } from "@/lib/validators";
 import { logAudit } from "@/lib/audit";
 
@@ -12,7 +13,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.COHORT_MANAGE);
     const { id } = await params;
 
     const parsed = semesterActionSchema.safeParse(await req.json());
@@ -21,9 +22,7 @@ export async function PATCH(
     }
 
     const semester = await db.semester.findUnique({ where: { id } });
-    if (!semester) {
-      return Response.json({ error: "Semester not found" }, { status: 404 });
-    }
+    assertInProgram(semester, scope, "Semester");
 
     switch (parsed.data.action) {
       case "activate":
@@ -35,8 +34,9 @@ export async function PATCH(
         }
         // Exactly one active semester at a time.
         await db.$transaction([
+          // ...within this programme; other programmes' cohorts are untouched.
           db.semester.updateMany({
-            where: { isActive: true },
+            where: { isActive: true, programId: scope.programId },
             data: { isActive: false },
           }),
           db.semester.update({
@@ -80,6 +80,8 @@ export async function PATCH(
     await logAudit({
       actorId: session.user.id,
       action: `semester.${parsed.data.action}`,
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       targetType: "Semester",
       targetId: id,
       metadata: { name: semester.name },

@@ -1,7 +1,8 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { loadActor } from "@/lib/rbac/actor";
+import { visibleAnnouncementsWhere } from "@/services/announcements";
 import { formatDateTime } from "@/lib/utils";
-import type { Audience } from "@prisma/client";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,15 +13,10 @@ export const dynamic = "force-dynamic";
 export default async function AnnouncementsPage() {
   const session = await auth();
 
-  const audiences: Audience[] =
-    session!.user.role === "MENTOR"
-      ? ["ALL", "MENTORS"]
-      : session!.user.role === "MENTEE"
-        ? ["ALL", "MENTEES"]
-        : ["ALL", "MENTORS", "MENTEES"];
+  const actor = await loadActor(session!.user.id);
 
   const announcements = await db.announcement.findMany({
-    where: { audience: { in: audiences } },
+    where: visibleAnnouncementsWhere(actor),
     include: { createdBy: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
     take: 50,

@@ -1,13 +1,18 @@
 import { db } from "@/lib/db";
 import type { DashboardStats } from "@/types";
 
-export async function getActiveSemester() {
-  return db.semester.findFirst({ where: { isActive: true, isArchived: false } });
+/** The programme's active cohort. Every query here is confined to one programme. */
+export async function getActiveSemester(programId: string) {
+  return db.semester.findFirst({
+    where: { isActive: true, isArchived: false, programId },
+  });
 }
 
-export async function getDashboardStats(): Promise<DashboardStats> {
-  const activeSemester = await getActiveSemester();
-  const semesterFilter = activeSemester ? { semesterId: activeSemester.id } : {};
+export async function getDashboardStats(programId: string): Promise<DashboardStats> {
+  const activeSemester = await getActiveSemester(programId);
+  const semesterFilter = activeSemester
+    ? { semesterId: activeSemester.id }
+    : { semester: { programId } };
 
   const [
     mentors,
@@ -23,15 +28,18 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     db.menteeProfile.count({
       where: { ...semesterFilter, user: { status: "APPROVED" } },
     }),
-    db.user.count({ where: { status: "PENDING" } }),
+    db.programMembership.count({ where: { programId, status: "PENDING" } }),
     db.menteeProfile.count({
       where: { ...semesterFilter, waitlisted: true, user: { status: "APPROVED" } },
     }),
-    db.pairing.count({ where: { ...semesterFilter, status: "ACTIVE" } }),
+    db.pairing.count({
+      where: { programId, ...(activeSemester ? { semesterId: activeSemester.id } : {}), status: "ACTIVE" },
+    }),
     db.meeting.aggregate({
-      where: activeSemester
-        ? { pairing: { semesterId: activeSemester.id } }
-        : {},
+      where: {
+        programId,
+        ...(activeSemester ? { pairing: { semesterId: activeSemester.id } } : {}),
+      },
       _count: { id: true },
       _sum: { durationMinutes: true },
     }),
@@ -55,22 +63,30 @@ export interface AnalyticsData {
   interestPopularity: { name: string; count: number }[];
 }
 
-export async function getAnalytics(): Promise<AnalyticsData> {
-  const activeSemester = await getActiveSemester();
+export async function getAnalytics(programId: string): Promise<AnalyticsData> {
+  const activeSemester = await getActiveSemester(programId);
   const semesterId = activeSemester?.id;
+  const inProgram = { semester: { programId } };
 
   const [pairings, meetings, interestCounts] = await Promise.all([
     db.pairing.findMany({
-      where: semesterId ? { semesterId, status: "ACTIVE" } : { status: "ACTIVE" },
+      where: { programId, status: "ACTIVE", ...(semesterId ? { semesterId } : {}) },
       include: { menteeProfile: { select: { department: true } } },
     }),
     db.meeting.findMany({
-      where: semesterId ? { pairing: { semesterId } } : {},
+      where: { programId, ...(semesterId ? { pairing: { semesterId } } : {}) },
       select: { date: true },
       orderBy: { date: "asc" },
     }),
     db.interest.findMany({
-      include: { _count: { select: { mentors: true, mentees: true } } },
+      include: {
+        _count: {
+          select: {
+            mentors: { where: { mentorProfile: inProgram } },
+            mentees: { where: { menteeProfile: inProgram } },
+          },
+        },
+      },
     }),
   ]);
 

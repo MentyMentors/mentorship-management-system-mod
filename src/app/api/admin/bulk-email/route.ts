@@ -1,11 +1,11 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
 import { bulkEmailChunkSchema } from "@/lib/validators";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendBulkMail } from "@/lib/email/mailer";
 import { bulkEmail } from "@/lib/email/templates";
 import { logAudit } from "@/lib/audit";
-import type { Role } from "@prisma/client";
+import type { ProgramRole } from "@prisma/client";
 
 // One chunk at a time keeps each request comfortably under serverless
 // time limits — sending hundreds of recipients in a single invocation
@@ -17,7 +17,7 @@ const CHUNK_SIZE = 15;
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.EMAIL_SEND);
 
     // CHUNK_SIZE recipients per request — 150 requests/hr gives a ceiling
     // of ~2250 recipients/hr per admin, comfortably above a 1000+ send.
@@ -50,7 +50,7 @@ export async function POST(req: Request): Promise<Response> {
       runningFailedEmails,
     } = parsed.data;
 
-    const roles: Role[] =
+    const roles: ProgramRole[] =
       audience === "MENTORS"
         ? ["MENTOR"]
         : audience === "MENTEES"
@@ -61,7 +61,12 @@ export async function POST(req: Request): Promise<Response> {
     // client-supplied list — stays correct even if membership changes
     // slightly mid-send, and needs no server-side state between calls.
     const allRecipients = await db.user.findMany({
-      where: { status: "APPROVED", role: { in: roles } },
+      where: {
+        status: "APPROVED",
+        memberships: {
+          some: { programId: scope.programId, status: "ACTIVE", role: { in: roles } },
+        },
+      },
       select: { email: true },
       orderBy: { id: "asc" },
     });
@@ -89,6 +94,8 @@ export async function POST(req: Request): Promise<Response> {
       await logAudit({
         actorId: session.user.id,
         action: "email.bulk_send",
+        programId: scope.programId,
+        institutionId: scope.institutionId,
         metadata: { subject, audience, sent, failed, failedEmails },
       });
     }

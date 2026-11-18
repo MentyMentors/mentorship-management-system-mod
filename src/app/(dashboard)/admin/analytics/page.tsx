@@ -1,4 +1,6 @@
 import { getAnalytics, getDashboardStats } from "@/services/stats";
+import { programPage } from "@/lib/admin-pages";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { PageHeader } from "@/components/layout/page-header";
 import {
   Card,
@@ -41,9 +43,10 @@ function BarList({
 }
 
 export default async function AdminAnalyticsPage() {
+  const { scope } = await programPage(PERMISSIONS.PROGRAM_ANALYTICS_READ);
   const [analytics, stats] = await Promise.all([
-    getAnalytics(),
-    getDashboardStats(),
+    getAnalytics(scope.programId),
+    getDashboardStats(scope.programId),
   ]);
 
   const pairingRate =

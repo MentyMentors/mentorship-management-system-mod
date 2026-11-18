@@ -40,8 +40,17 @@ async function main() {
     interests[name] = interest.id;
   }
 
+  // The programme created by the multi-tenant migration.
+  const defaultProgram = await prisma.platformSetting.findUnique({
+    where: { key: "legacy.default_program_id" },
+  });
+  if (!defaultProgram) {
+    throw new Error("Run `prisma migrate deploy` before seeding: default programme missing.");
+  }
+  const programId = defaultProgram.value;
+
   // ---- Admin -----------------------------------------------------
-  await prisma.user.upsert({
+  const admin = await prisma.user.upsert({
     where: { email: adminEmail },
     update: {},
     create: {
@@ -55,6 +64,19 @@ async function main() {
     },
   });
 
+  // Super Admin on the platform and coordinator of the default programme.
+  for (const [roleId, scope] of [
+    ["role_super_admin", { scopeType: "PLATFORM" as const }],
+    ["role_program_coordinator", { scopeType: "PROGRAM" as const, programId }],
+  ] as const) {
+    const existing = await prisma.roleAssignment.findFirst({
+      where: { userId: admin.id, roleId, revokedAt: null },
+    });
+    if (!existing) {
+      await prisma.roleAssignment.create({ data: { userId: admin.id, roleId, ...scope } });
+    }
+  }
+
   // ---- Semester --------------------------------------------------
   const semester = await prisma.semester.upsert({
     where: { name: "2026 Semester 1" },
@@ -65,6 +87,7 @@ async function main() {
       endDate: new Date("2026-05-15"),
       isActive: true,
       registrationOpen: true,
+      programId,
     },
   });
 
@@ -127,6 +150,11 @@ async function main() {
         status: UserStatus.APPROVED,
         emailVerifiedAt: new Date(),
       },
+    });
+    await prisma.programMembership.upsert({
+      where: { programId_userId_role: { programId, userId: user.id, role: "MENTOR" } },
+      update: {},
+      create: { programId, userId: user.id, role: "MENTOR", status: "ACTIVE", cohortId: semester.id, joinedAt: new Date() },
     });
 
     const profile = await prisma.mentorProfile.upsert({
@@ -212,6 +240,17 @@ async function main() {
         role: Role.MENTEE,
         status: m.status,
         emailVerifiedAt: new Date(),
+      },
+    });
+    await prisma.programMembership.upsert({
+      where: { programId_userId_role: { programId, userId: user.id, role: "MENTEE" } },
+      update: {},
+      create: {
+        programId,
+        userId: user.id,
+        role: "MENTEE",
+        status: m.status === UserStatus.APPROVED ? "ACTIVE" : "PENDING",
+        cohortId: semester.id,
       },
     });
 

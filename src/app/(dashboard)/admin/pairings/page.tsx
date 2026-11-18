@@ -1,4 +1,6 @@
 import { db } from "@/lib/db";
+import { programPage } from "@/lib/admin-pages";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { getActiveSemester } from "@/services/stats";
 import { PageHeader } from "@/components/layout/page-header";
 import { PairingsManager } from "@/components/admin/pairings-manager";
@@ -7,11 +9,17 @@ export const metadata = { title: "Pairings" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminPairingsPage() {
-  const semester = await getActiveSemester();
+  const { scope } = await programPage(PERMISSIONS.PAIRING_READ);
+  const semester = await getActiveSemester(scope.programId);
+  const inProgram = { semester: { programId: scope.programId } };
 
   const [pairings, mentors, waitlisted] = await Promise.all([
     db.pairing.findMany({
-      where: { status: "ACTIVE", ...(semester ? { semesterId: semester.id } : {}) },
+      where: {
+        programId: scope.programId,
+        status: "ACTIVE",
+        ...(semester ? { semesterId: semester.id } : {}),
+      },
       include: {
         mentorProfile: {
           include: { user: { select: { id: true, name: true, email: true } } },
@@ -26,6 +34,7 @@ export default async function AdminPairingsPage() {
     db.mentorProfile.findMany({
       where: {
         user: { status: "APPROVED" },
+        ...inProgram,
         ...(semester ? { semesterId: semester.id } : {}),
       },
       include: {
@@ -38,6 +47,7 @@ export default async function AdminPairingsPage() {
       where: {
         waitlisted: true,
         user: { status: "APPROVED" },
+        ...inProgram,
         ...(semester ? { semesterId: semester.id } : {}),
       },
       include: { user: { select: { name: true, email: true } } },

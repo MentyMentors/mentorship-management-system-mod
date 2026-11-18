@@ -1,11 +1,11 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requirePlatformPermission } from "@/lib/authz";
 import type { Prisma } from "@prisma/client";
 
 /** GET /api/admin/audit-log?category=&q=&page= — admin audit trail. */
 export async function GET(req: Request): Promise<Response> {
   try {
-    await requireSession(["ADMIN"]);
+    await requirePlatformPermission(PERMISSIONS.PLATFORM_AUDIT_READ);
 
     const url = new URL(req.url);
     const category = url.searchParams.get("category")?.trim();

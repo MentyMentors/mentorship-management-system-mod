@@ -9,6 +9,8 @@ import {
   Users,
 } from "lucide-react";
 import { db } from "@/lib/db";
+import { programPage } from "@/lib/admin-pages";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { getDashboardStats } from "@/services/stats";
 import { formatDate } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -27,16 +29,24 @@ export const metadata = { title: "Admin dashboard" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
+  const { scope } = await programPage(PERMISSIONS.PROGRAM_READ);
   const [stats, recentPending, waitlisted] = await Promise.all([
-    getDashboardStats(),
+    getDashboardStats(scope.programId),
     db.user.findMany({
-      where: { status: "PENDING" },
+      where: {
+        status: "PENDING",
+        memberships: { some: { programId: scope.programId, status: "PENDING" } },
+      },
       orderBy: { createdAt: "desc" },
       take: 5,
       select: { id: true, name: true, email: true, role: true, createdAt: true },
     }),
     db.menteeProfile.findMany({
-      where: { waitlisted: true, user: { status: "APPROVED" } },
+      where: {
+        waitlisted: true,
+        user: { status: "APPROVED" },
+        semester: { programId: scope.programId },
+      },
       include: { user: { select: { name: true, email: true } } },
       orderBy: { waitlistedAt: "asc" },
       take: 5,

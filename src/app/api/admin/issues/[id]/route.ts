@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requirePlatformPermission } from "@/lib/authz";
 import { issueDecisionSchema } from "@/lib/validators";
 
 /** PATCH /api/admin/issues/:id — mark an issue report resolved. */
@@ -8,7 +8,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    await requireSession(["ADMIN"]);
+    await requirePlatformPermission(PERMISSIONS.ISSUE_MANAGE);
     const { id } = await params;
 
     const parsed = issueDecisionSchema.safeParse(await req.json());

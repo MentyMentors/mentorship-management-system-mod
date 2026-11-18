@@ -1,5 +1,8 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireActor } from "@/lib/authz";
+import { administrativeReach, can } from "@/lib/rbac/authorize";
+import { resolveProgramScope } from "@/lib/rbac/scope";
+import type { Prisma } from "@prisma/client";
 import { meetingLogSchema } from "@/lib/validators";
 import { sanitizeText, sanitizeMultiline } from "@/lib/sanitize";
 import { createZoomMeeting } from "@/lib/zoom";
@@ -7,21 +10,30 @@ import { createZoomMeeting } from "@/lib/zoom";
 /** GET /api/meetings — meetings visible to the current user. */
 export async function GET(): Promise<Response> {
   try {
-    const session = await requireSession();
-    const { id: userId, role } = session.user;
+    const { session, actor } = await requireActor();
+    const userId = session.user.id;
+
+    // Own meetings, plus every meeting in programmes the caller administers.
+    const reach = administrativeReach(actor);
+    const own: Prisma.MeetingWhereInput = {
+      pairing: {
+        OR: [{ mentorProfile: { userId } }, { menteeProfile: { userId } }],
+      },
+    };
+    const where: Prisma.MeetingWhereInput = reach.platform
+      ? {}
+      : {
+          OR: [
+            own,
+            ...(reach.programIds.length ? [{ programId: { in: reach.programIds } }] : []),
+            ...(reach.institutionIds.length
+              ? [{ program: { institutionId: { in: reach.institutionIds } } }]
+              : []),
+          ],
+        };
 
     const meetings = await db.meeting.findMany({
-      where:
-        role === "ADMIN"
-          ? {}
-          : {
-              pairing: {
-                OR: [
-                  { mentorProfile: { userId } },
-                  { menteeProfile: { userId } },
-                ],
-              },
-            },
+      where,
       include: {
         pairing: {
           include: {
@@ -43,7 +55,7 @@ export async function GET(): Promise<Response> {
 /** POST /api/meetings — mentors log a meeting for one of their pairings. */
 export async function POST(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["MENTOR", "ADMIN"]);
+    const { session, actor } = await requireActor();
 
     const parsed = meetingLogSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -64,12 +76,14 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "Pairing not found" }, { status: 404 });
     }
 
-    // Mentors may only log meetings for their own pairings.
-    if (
-      session.user.role === "MENTOR" &&
-      pairing.mentorProfile.userId !== session.user.id
-    ) {
-      return Response.json({ error: "Not your pairing" }, { status: 403 });
+    // The pairing's own mentor may log meetings; otherwise the caller needs
+    // meeting management rights in the pairing's programme.
+    const isOwnMentor = pairing.mentorProfile.userId === session.user.id;
+    if (!isOwnMentor) {
+      const scope = pairing.programId ? await resolveProgramScope(pairing.programId) : null;
+      if (!scope || !can(actor, PERMISSIONS.MEETING_MANAGE, scope)) {
+        return Response.json({ error: "Not your pairing" }, { status: 403 });
+      }
     }
 
     // Only upcoming meetings get a Zoom link — a meeting logged in the
@@ -87,6 +101,7 @@ export async function POST(req: Request): Promise<Response> {
     const meeting = await db.meeting.create({
       data: {
         pairingId: pairing.id,
+        programId: pairing.programId,
         date: parsed.data.date,
         durationMinutes: parsed.data.durationMinutes,
         topics: sanitizeText(parsed.data.topics),

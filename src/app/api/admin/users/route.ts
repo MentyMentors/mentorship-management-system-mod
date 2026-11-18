@@ -1,11 +1,15 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { requireDefaultProgramPermission, errorResponse, PERMISSIONS } from "@/lib/authz";
 import type { Prisma, Role, UserStatus } from "@prisma/client";
 
-/** GET /api/admin/users?status=&role=&q=&page= — admin user listing. */
+/**
+ * GET /api/admin/users?status=&role=&q=&page=
+ * People in the default programme: its members and its staff. Users who only
+ * belong to other programmes are not listed.
+ */
 export async function GET(req: Request): Promise<Response> {
   try {
-    await requireSession(["ADMIN"]);
+    const { scope } = await requireDefaultProgramPermission(PERMISSIONS.PARTICIPANT_READ);
 
     const url = new URL(req.url);
     const status = url.searchParams.get("status") as UserStatus | null;
@@ -15,13 +19,21 @@ export async function GET(req: Request): Promise<Response> {
     const pageSize = 20;
 
     const where: Prisma.UserWhereInput = {
+      OR: [
+        { memberships: { some: { programId: scope.programId } } },
+        { roleAssignments: { some: { programId: scope.programId, revokedAt: null } } },
+      ],
       ...(status ? { status } : {}),
       ...(role ? { role } : {}),
       ...(q
         ? {
-            OR: [
-              { name: { contains: q, mode: "insensitive" } },
-              { email: { contains: q, mode: "insensitive" } },
+            AND: [
+              {
+                OR: [
+                  { name: { contains: q, mode: "insensitive" } },
+                  { email: { contains: q, mode: "insensitive" } },
+                ],
+              },
             ],
           }
         : {}),

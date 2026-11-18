@@ -1,11 +1,14 @@
 import { Suspense } from "react";
+import { programPage } from "@/lib/admin-pages";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { PageHeader } from "@/components/layout/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UsersTable } from "@/components/admin/users-table";
 
 export const metadata = { title: "User management" };
 
-export default function AdminUsersPage() {
+export default async function AdminUsersPage() {
+  await programPage(PERMISSIONS.PARTICIPANT_READ);
   return (
     <>
       <PageHeader

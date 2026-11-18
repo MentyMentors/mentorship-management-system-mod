@@ -1,3 +1,6 @@
+> **Superseded.** This October 2026 audit is kept for history. The current architecture is in
+> `docs/phase-0/` and the implemented foundation in `docs/MULTITENANT.md`.
+
 # PHASE A — Repository Audit (actual codebase, verified against GitHub main)
 
 ## Stack

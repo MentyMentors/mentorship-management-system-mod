@@ -1,30 +1,34 @@
 /**
  * Pure helpers that answer "what is this user's relationship to THIS
  * programme?" — the heart of the one-account / many-programme-roles rule.
- * Kept free of database access so they are trivially unit-testable.
+ * Free of database access so they are trivially unit-testable.
+ *
+ * A user may hold several roles in one programme (for example MENTOR and
+ * PRESENTER), and unrelated roles in other programmes. Each helper here only
+ * ever looks at one programme.
  */
 
-export type ProgramRole = "MENTOR" | "MENTEE";
+export type ProgramRole =
+  | "MENTOR"
+  | "MENTEE"
+  | "PRESENTER"
+  | "FACILITATOR"
+  | "PARTICIPANT";
 
 export interface MembershipLike {
   programId: string;
   role: ProgramRole;
-  status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
+  status: "PENDING" | "ACTIVE" | "INACTIVE" | "SUSPENDED" | "REMOVED";
 }
 
-/**
- * The user's ACTIVE role in one programme, or null when they are not an
- * active member. A user may be MENTOR in programme A and MENTEE in
- * programme B at the same time; each call here only ever sees one scope.
- */
-export function activeRoleInProgram(
+/** Every ACTIVE role the user holds in one programme (empty when none). */
+export function activeRolesInProgram(
   memberships: MembershipLike[],
   programId: string
-): ProgramRole | null {
-  const match = memberships.find(
-    (m) => m.programId === programId && m.status === "ACTIVE"
-  );
-  return match ? match.role : null;
+): ProgramRole[] {
+  return memberships
+    .filter((m) => m.programId === programId && m.status === "ACTIVE")
+    .map((m) => m.role);
 }
 
 /** True when the user participates (in ANY role) in the programme. */
@@ -32,26 +36,24 @@ export function isActiveMember(
   memberships: MembershipLike[],
   programId: string
 ): boolean {
-  return activeRoleInProgram(memberships, programId) !== null;
+  return activeRolesInProgram(memberships, programId).length > 0;
 }
 
 /**
- * Whether the user may act as `role` inside `programId`. Deliberately
- * scope-scoped: being MENTOR elsewhere grants nothing here.
+ * Whether the user may act as `role` inside `programId`. Being MENTOR
+ * elsewhere grants nothing here.
  */
 export function canActAs(
   memberships: MembershipLike[],
   programId: string,
   role: ProgramRole
 ): boolean {
-  return activeRoleInProgram(memberships, programId) === role;
+  return activeRolesInProgram(memberships, programId).includes(role);
 }
 
 /**
  * Pairing eligibility: a mentor candidate must hold an ACTIVE MENTOR
- * membership in the SAME programme the mentee cohort belongs to. The
- * mentor's role in any other programme is irrelevant — this is the check
- * that prevents cross-programme leakage by construction.
+ * membership in the SAME programme as the mentee.
  */
 export function canMentorInProgram(
   memberships: MembershipLike[],
@@ -62,7 +64,7 @@ export function canMentorInProgram(
 
 /**
  * Validates that both sides of a proposed pairing belong to the same
- * programme scope. pairingEngine callers run this BEFORE any write.
+ * programme scope. Pairing callers run this BEFORE any write.
  */
 export function pairingScopeValid(input: {
   mentorProgramId: string;

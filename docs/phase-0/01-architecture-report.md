@@ -1,6 +1,6 @@
 # Phase 0 — Architecture Report
 
-Status: **awaiting approval**. No application code, schema or production data has been changed in
+Status: **approved 18 Nov 2026** (decisions recorded in §9). Phase 1 implemented. No application code, schema or production data has been changed in
 Phase 0. Everything in `docs/phase-0/` is a proposal.
 
 Audited:
@@ -267,3 +267,19 @@ at an encrypted value (programme-specific Zoom accounts). Nothing secret is sent
 4. Zoom: one Menty-owned Zoom account to start, with programme-specific accounts later?
 5. Email: which domain will Menty send from (needed for SPF/DKIM), and is Hostinger SMTP staying?
 6. Programme URLs: `menty…/p/<slug>` path-based (recommended) or subdomains per programme?
+
+## 9. Decisions (18 Nov 2026)
+
+1. The latest Vercel deployment did fail at `prisma migrate deploy` (confirms §1.1).
+2. Existing data sits under **MUBAS** as "Faculty of Engineering Mentorship Programme"
+   (`mubas-engineering-mentorship`). The first-party Menty Volunteer Mentor Network will be a
+   new programme, created in Phase 3.
+3. File storage: Vercel Blob.
+4. Zoom: one Menty-owned account to start.
+5. Email: sent from `mentmw.org`, via Hostinger SMTP.
+6. Programme URLs: path-based, `/p/<slug>`.
+
+Phase 1 deviation from `03-proposed-schema.prisma`: `MentorProfile.userId` and
+`MenteeProfile.userId` stay unique. Those profiles are legacy one-to-one data for the MUBAS
+programme; multi-programme roles come from `ProgramMembership`, and new programmes collect
+their own profile data through registration forms (Phase 4).

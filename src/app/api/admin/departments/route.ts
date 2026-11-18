@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requirePlatformPermission } from "@/lib/authz";
 import { catalogItemCreateSchema } from "@/lib/validators";
 import { sanitizeText } from "@/lib/sanitize";
 import { logAudit } from "@/lib/audit";
@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit";
 /** GET /api/admin/departments — every department, including inactive. */
 export async function GET(): Promise<Response> {
   try {
-    await requireSession(["ADMIN"]);
+    await requirePlatformPermission(PERMISSIONS.CATALOG_MANAGE);
     const departments = await db.department.findMany({ orderBy: { name: "asc" } });
     return Response.json({ departments });
   } catch (error) {
@@ -18,7 +18,7 @@ export async function GET(): Promise<Response> {
 /** POST /api/admin/departments — add a new department. */
 export async function POST(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session } = await requirePlatformPermission(PERMISSIONS.CATALOG_MANAGE);
 
     const parsed = catalogItemCreateSchema.safeParse(await req.json());
     if (!parsed.success) {

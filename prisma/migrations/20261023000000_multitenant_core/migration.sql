@@ -1,310 +1,413 @@
 -- ============================================================================
--- Menty Multitenant Transformation — Stage 1 migration
+-- Menty multi-tenant foundation (Phase 1)
 --
--- Strategy (staged, non-destructive):
---   1. Introduce new tables and relationships        (this file, section 1)
---   2. Backfill existing records                     (this file, section 2)
---   3. Application code switches reads/writes        (separate commits)
---   4. Obsolete global-role fields removed later     (stage 6, separate
---      migration — only after code no longer reads them)
+-- Replaces the October 2026 draft of this migration, which used psql-only
+-- variables and could not run under `prisma migrate deploy`. On a database
+-- where that draft is recorded as failed, first run:
 --
--- Safe to review and run against a DEVELOPMENT database first:
---   createdb menty_dev && psql menty_dev < this file
+--   npx prisma migrate resolve --rolled-back 20261023000000_multitenant_core
+--
+-- then deploy as normal. See docs/phase-1/DEPLOY.md.
+--
+-- Expand-only: adds enums, tables and nullable columns, then backfills.
+-- No existing row is updated except to set a new programId column, and no
+-- row is deleted. Runs in one transaction.
 -- ============================================================================
 
--- Section 0: extensions used for idempotent backfill keys --------------------
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+BEGIN;
 
--- Section 1: new enums -------------------------------------------------------
-CREATE TYPE "InstitutionStatus" AS ENUM ('ACTIVE', 'SUSPENDED');
-CREATE TYPE "ProgramStatus" AS ENUM ('DRAFT', 'PUBLISHED', 'ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED');
-CREATE TYPE "ProgramRole" AS ENUM ('MENTOR', 'MENTEE');
-CREATE TYPE "MembershipStatus" AS ENUM ('ACTIVE', 'INACTIVE', 'SUSPENDED');
-CREATE TYPE "ApplicationStatus" AS ENUM ('DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'WAITLISTED');
-CREATE TYPE "FormStatus" AS ENUM ('DRAFT', 'PUBLISHED', 'ARCHIVED');
-CREATE TYPE "FormFieldType" AS ENUM ('SHORT_TEXT', 'LONG_TEXT', 'EMAIL', 'NUMBER', 'DROPDOWN', 'SINGLE_CHOICE', 'MULTI_CHOICE', 'CHECKBOX', 'DATE');
+-- ----------------------------------------------------------------------------
+-- 0. Clean up anything a partial run of the October draft may have left.
+--    Refuses to continue if any of those objects already holds data.
+-- ----------------------------------------------------------------------------
+DO $$
+DECLARE
+  t text;
+  n bigint;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['ProgramApplication','FormQuestion','RegistrationForm',
+    'ProgramMembership','ProgramCoordinator','MentorshipProgram',
+    'InstitutionalAffiliation','InstitutionDomain','Institution']
+  LOOP
+    IF to_regclass(format('public.%I', t)) IS NOT NULL THEN
+      EXECUTE format('SELECT count(*) FROM %I', t) INTO n;
+      IF n > 0 THEN
+        RAISE EXCEPTION 'Table % already contains % rows; refusing to continue', t, n;
+      END IF;
+      EXECUTE format('DROP TABLE %I CASCADE', t);
+    END IF;
+  END LOOP;
+END $$;
 
--- Pairing lifecycle gains proposed/cancelled/reassignment states.
--- ADD VALUE is transactional-safe when placed before any use of the value.
-ALTER TYPE "PairingStatus" ADD VALUE IF NOT EXISTS 'PROPOSED';
-ALTER TYPE "PairingStatus" ADD VALUE IF NOT EXISTS 'CANCELLED';
-ALTER TYPE "PairingStatus" ADD VALUE IF NOT EXISTS 'REASSIGNMENT_REQUIRED';
+ALTER TABLE "Semester"     DROP COLUMN IF EXISTS "programId";
+ALTER TABLE "Announcement" DROP COLUMN IF EXISTS "programId";
+ALTER TABLE "AuditLog"     DROP COLUMN IF EXISTS "institutionId";
+ALTER TABLE "AuditLog"     DROP COLUMN IF EXISTS "programId";
 
--- Section 1b: scope existing tables ------------------------------------------
+DROP TYPE IF EXISTS "InstitutionStatus";
+DROP TYPE IF EXISTS "ProgramStatus";
+DROP TYPE IF EXISTS "ProgramRole";
+DROP TYPE IF EXISTS "MembershipStatus";
+DROP TYPE IF EXISTS "ApplicationStatus";
+DROP TYPE IF EXISTS "FormStatus";
+DROP TYPE IF EXISTS "FormFieldType";
 
--- Semester becomes the cohort table; nullable now, backfilled below,
--- made NOT NULL in stage 6 after all rows are scoped to a programme.
-ALTER TABLE "Semester" ADD COLUMN "programId" TEXT;
-CREATE INDEX "Semester_programId_idx" ON "Semester"("programId");
+-- The draft dropped these; restore them if they are missing.
+CREATE UNIQUE INDEX IF NOT EXISTS "MentorProfile_userId_key" ON "MentorProfile"("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "MenteeProfile_userId_key" ON "MenteeProfile"("userId");
 
+-- ----------------------------------------------------------------------------
+-- 1. Enums
+-- ----------------------------------------------------------------------------
+CREATE TYPE "ScopeType" AS ENUM ('PLATFORM', 'INSTITUTION', 'PROGRAM');
+CREATE TYPE "InstitutionStatus" AS ENUM ('PENDING_VERIFICATION', 'ACTIVE', 'SUSPENDED');
+CREATE TYPE "VerificationStatus" AS ENUM ('UNVERIFIED', 'PENDING', 'VERIFIED', 'REJECTED');
+CREATE TYPE "ProgramOwnerType" AS ENUM ('PLATFORM', 'INSTITUTION', 'INDEPENDENT');
+CREATE TYPE "ProgramStatus" AS ENUM ('DRAFT', 'PUBLISHED', 'ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED', 'SUSPENDED');
+CREATE TYPE "ProgramVisibility" AS ENUM ('PUBLIC', 'UNLISTED', 'PRIVATE');
+CREATE TYPE "DeliveryModel" AS ENUM ('PRESENTER_LED', 'ONE_TO_ONE', 'HYBRID');
+CREATE TYPE "DeliveryMode" AS ENUM ('ONLINE', 'IN_PERSON', 'BLENDED');
+CREATE TYPE "MatchingMode" AS ENUM ('MANUAL', 'AUTOMATIC', 'HYBRID');
+CREATE TYPE "ProgramRole" AS ENUM ('MENTOR', 'MENTEE', 'PRESENTER', 'FACILITATOR', 'PARTICIPANT');
+CREATE TYPE "MembershipStatus" AS ENUM ('PENDING', 'ACTIVE', 'INACTIVE', 'SUSPENDED', 'REMOVED');
+
+-- ----------------------------------------------------------------------------
+-- 2. New columns on existing tables (all nullable or defaulted)
+-- ----------------------------------------------------------------------------
+ALTER TABLE "User"         ADD COLUMN "sessionVersion" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Semester"     ADD COLUMN "programId" TEXT;
+ALTER TABLE "Pairing"      ADD COLUMN "programId" TEXT;
+ALTER TABLE "Meeting"      ADD COLUMN "programId" TEXT;
 ALTER TABLE "Announcement" ADD COLUMN "programId" TEXT;
-CREATE INDEX "Announcement_programId_createdAt_idx" ON "Announcement"("programId", "createdAt");
+ALTER TABLE "AuditLog"     ADD COLUMN "institutionId" TEXT;
+ALTER TABLE "AuditLog"     ADD COLUMN "programId" TEXT;
 
-ALTER TABLE "AuditLog" ADD COLUMN "institutionId" TEXT;
-ALTER TABLE "AuditLog" ADD COLUMN "programId" TEXT;
-CREATE INDEX "AuditLog_institutionId_createdAt_idx" ON "AuditLog"("institutionId", "createdAt");
-CREATE INDEX "AuditLog_programId_createdAt_idx" ON "AuditLog"("programId", "createdAt");
-
--- THE key constraint change: drop the global one-role-per-user constraints.
--- A user may now hold a MentorProfile in programme A and a MenteeProfile in
--- programme B (or multiple cohorts of the same programme).
-ALTER TABLE "MentorProfile" DROP CONSTRAINT IF EXISTS "MentorProfile_userId_key";
-ALTER TABLE "MenteeProfile" DROP CONSTRAINT IF EXISTS "MenteeProfile_userId_key";
-CREATE INDEX "MentorProfile_userId_idx" ON "MentorProfile"("userId");
-CREATE INDEX "MenteeProfile_userId_idx" ON "MenteeProfile"("userId");
-
--- Section 1c: new tables ------------------------------------------------------
-
+-- ----------------------------------------------------------------------------
+-- 3. New tables
+-- ----------------------------------------------------------------------------
 CREATE TABLE "Institution" (
-  "id"         TEXT NOT NULL,
-  "name"       TEXT NOT NULL,
-  "code"       TEXT NOT NULL,
-  "status"     "InstitutionStatus" NOT NULL DEFAULT 'ACTIVE',
-  "createdAt"  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt"  TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "Institution_pkey" PRIMARY KEY ("id")
+    "id" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "shortName" TEXT,
+    "description" TEXT,
+    "websiteUrl" TEXT,
+    "logoUrl" TEXT,
+    "country" TEXT NOT NULL DEFAULT 'Malawi',
+    "status" "InstitutionStatus" NOT NULL DEFAULT 'PENDING_VERIFICATION',
+    "verificationStatus" "VerificationStatus" NOT NULL DEFAULT 'UNVERIFIED',
+    "verifiedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "Institution_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX "Institution_code_key" ON "Institution"("code");
+CREATE UNIQUE INDEX "Institution_slug_key" ON "Institution"("slug");
 
 CREATE TABLE "InstitutionDomain" (
-  "id"              TEXT NOT NULL,
-  "institutionId"   TEXT NOT NULL,
-  "domain"          TEXT NOT NULL,
-  "allowSubdomains" BOOLEAN NOT NULL DEFAULT false,
-  "isActive"        BOOLEAN NOT NULL DEFAULT true,
-  "createdAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt"       TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "InstitutionDomain_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "InstitutionDomain_institutionId_fkey"
-    FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "id" TEXT NOT NULL,
+    "institutionId" TEXT NOT NULL,
+    "domain" TEXT NOT NULL,
+    "allowSubdomains" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "InstitutionDomain_pkey" PRIMARY KEY ("id")
 );
 CREATE UNIQUE INDEX "InstitutionDomain_domain_key" ON "InstitutionDomain"("domain");
 CREATE INDEX "InstitutionDomain_institutionId_idx" ON "InstitutionDomain"("institutionId");
 
-CREATE TABLE "InstitutionalAffiliation" (
-  "id"            TEXT NOT NULL,
-  "userId"        TEXT NOT NULL,
-  "institutionId" TEXT NOT NULL,
-  "email"         TEXT NOT NULL,
-  "isPrimary"     BOOLEAN NOT NULL DEFAULT false,
-  "verifiedAt"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "createdAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT "InstitutionalAffiliation_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "InstitutionalAffiliation_userId_fkey"
-    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT "InstitutionalAffiliation_institutionId_fkey"
-    FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE
+CREATE TABLE "InstitutionMembership" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "institutionId" TEXT NOT NULL,
+    "verifiedEmail" TEXT,
+    "verifiedAt" TIMESTAMP(3),
+    "isPrimary" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "InstitutionMembership_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX "InstitutionalAffiliation_userId_institutionId_key"
-  ON "InstitutionalAffiliation"("userId", "institutionId");
-CREATE INDEX "InstitutionalAffiliation_institutionId_idx" ON "InstitutionalAffiliation"("institutionId");
+CREATE UNIQUE INDEX "InstitutionMembership_userId_institutionId_key" ON "InstitutionMembership"("userId", "institutionId");
+CREATE INDEX "InstitutionMembership_institutionId_idx" ON "InstitutionMembership"("institutionId");
 
 CREATE TABLE "MentorshipProgram" (
-  "id"                  TEXT NOT NULL,
-  "institutionId"       TEXT NOT NULL,
-  "name"                TEXT NOT NULL,
-  "description"         TEXT,
-  "status"              "ProgramStatus" NOT NULL DEFAULT 'DRAFT',
-  "eligibility"         JSONB,
-  "matchingPreferences" JSONB,
-  "createdAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt"           TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "MentorshipProgram_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "MentorshipProgram_institutionId_fkey"
-    FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    "id" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "tagline" TEXT,
+    "description" TEXT,
+    "objectives" TEXT,
+    "category" TEXT,
+    "targetAudience" TEXT,
+    "welcomeMessage" TEXT,
+    "ownerType" "ProgramOwnerType" NOT NULL,
+    "institutionId" TEXT,
+    "ownerUserId" TEXT,
+    "status" "ProgramStatus" NOT NULL DEFAULT 'DRAFT',
+    "visibility" "ProgramVisibility" NOT NULL DEFAULT 'PUBLIC',
+    "verificationStatus" "VerificationStatus" NOT NULL DEFAULT 'UNVERIFIED',
+    "deliveryModel" "DeliveryModel" NOT NULL DEFAULT 'PRESENTER_LED',
+    "deliveryMode" "DeliveryMode" NOT NULL DEFAULT 'ONLINE',
+    "matchingMode" "MatchingMode",
+    "enabledModules" TEXT[],
+    "logoUrl" TEXT,
+    "coverImageUrl" TEXT,
+    "registrationOpensAt" TIMESTAMP(3),
+    "registrationClosesAt" TIMESTAMP(3),
+    "startsAt" TIMESTAMP(3),
+    "endsAt" TIMESTAMP(3),
+    "durationLabel" TEXT,
+    "capacity" INTEGER,
+    "requiresApproval" BOOLEAN NOT NULL DEFAULT true,
+    "eligibility" JSONB,
+    "matchingConfig" JSONB,
+    "careerTags" TEXT[],
+    "publishedAt" TIMESTAMP(3),
+    "archivedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "MentorshipProgram_pkey" PRIMARY KEY ("id"),
+    -- An institution-owned programme must name its institution.
+    CONSTRAINT "MentorshipProgram_owner_check" CHECK (
+      "ownerType" <> 'INSTITUTION' OR "institutionId" IS NOT NULL
+    )
 );
-CREATE UNIQUE INDEX "MentorshipProgram_institutionId_name_key"
-  ON "MentorshipProgram"("institutionId", "name");
+CREATE UNIQUE INDEX "MentorshipProgram_slug_key" ON "MentorshipProgram"("slug");
+CREATE INDEX "MentorshipProgram_status_visibility_idx" ON "MentorshipProgram"("status", "visibility");
 CREATE INDEX "MentorshipProgram_institutionId_status_idx" ON "MentorshipProgram"("institutionId", "status");
+CREATE INDEX "MentorshipProgram_ownerType_idx" ON "MentorshipProgram"("ownerType");
 
-CREATE TABLE "ProgramCoordinator" (
-  "id"           TEXT NOT NULL,
-  "programId"    TEXT NOT NULL,
-  "userId"       TEXT NOT NULL,
-  "assignedById" TEXT,
-  "createdAt"    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT "ProgramCoordinator_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "ProgramCoordinator_programId_fkey"
-    FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT "ProgramCoordinator_userId_fkey"
-    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
-);
-CREATE UNIQUE INDEX "ProgramCoordinator_programId_userId_key"
-  ON "ProgramCoordinator"("programId", "userId");
-CREATE INDEX "ProgramCoordinator_userId_idx" ON "ProgramCoordinator"("userId");
-
--- The core multitenant table. Uniqueness is (program, user, ROLE) — the
--- same user CAN hold MENTOR in one programme and MENTEE in another, and
--- both are recorded here.
 CREATE TABLE "ProgramMembership" (
-  "id"        TEXT NOT NULL,
-  "programId" TEXT NOT NULL,
-  "userId"    TEXT NOT NULL,
-  "role"      "ProgramRole" NOT NULL,
-  "status"    "MembershipStatus" NOT NULL DEFAULT 'ACTIVE',
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "ProgramMembership_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "ProgramMembership_programId_fkey"
-    FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT "ProgramMembership_userId_fkey"
-    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "id" TEXT NOT NULL,
+    "programId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "role" "ProgramRole" NOT NULL,
+    "status" "MembershipStatus" NOT NULL DEFAULT 'PENDING',
+    "cohortId" TEXT,
+    "expertise" TEXT[],
+    "capacity" INTEGER,
+    "joinedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "ProgramMembership_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX "ProgramMembership_programId_userId_role_key"
-  ON "ProgramMembership"("programId", "userId", "role");
+CREATE UNIQUE INDEX "ProgramMembership_programId_userId_role_key" ON "ProgramMembership"("programId", "userId", "role");
 CREATE INDEX "ProgramMembership_userId_status_idx" ON "ProgramMembership"("userId", "status");
-CREATE INDEX "ProgramMembership_programId_status_idx" ON "ProgramMembership"("programId", "status");
+CREATE INDEX "ProgramMembership_programId_role_status_idx" ON "ProgramMembership"("programId", "role", "status");
 
-CREATE TABLE "RegistrationForm" (
-  "id"        TEXT NOT NULL,
-  "programId" TEXT NOT NULL,
-  "role"      "ProgramRole" NOT NULL,
-  "name"      TEXT NOT NULL,
-  "status"    "FormStatus" NOT NULL DEFAULT 'DRAFT',
-  "version"   INTEGER NOT NULL DEFAULT 1,
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "RegistrationForm_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "RegistrationForm_programId_fkey"
-    FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE
+CREATE TABLE "AdminRole" (
+    "id" TEXT NOT NULL,
+    "key" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "allowedScopes" "ScopeType"[],
+    "permissions" TEXT[],
+    "isSystem" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "AdminRole_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX "RegistrationForm_programId_role_version_key"
-  ON "RegistrationForm"("programId", "role", "version");
+CREATE UNIQUE INDEX "AdminRole_key_key" ON "AdminRole"("key");
 
-CREATE TABLE "FormQuestion" (
-  "id"            TEXT NOT NULL,
-  "formId"        TEXT NOT NULL,
-  "key"           TEXT NOT NULL,
-  "label"         TEXT NOT NULL,
-  "description"   TEXT,
-  "type"          "FormFieldType" NOT NULL,
-  "required"      BOOLEAN NOT NULL DEFAULT false,
-  "options"       JSONB,
-  "validation"    JSONB,
-  "conditionalOn" JSONB,
-  "order"         INTEGER NOT NULL,
-  CONSTRAINT "FormQuestion_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "FormQuestion_formId_fkey"
-    FOREIGN KEY ("formId") REFERENCES "RegistrationForm"("id") ON DELETE CASCADE ON UPDATE CASCADE
+CREATE TABLE "RoleAssignment" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "roleId" TEXT NOT NULL,
+    "scopeType" "ScopeType" NOT NULL,
+    "institutionId" TEXT,
+    "programId" TEXT,
+    "grantedById" TEXT,
+    "expiresAt" TIMESTAMP(3),
+    "revokedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "RoleAssignment_pkey" PRIMARY KEY ("id"),
+    -- The scope columns must match the scope type exactly.
+    CONSTRAINT "RoleAssignment_scope_check" CHECK (
+      ("scopeType" = 'PLATFORM'    AND "institutionId" IS NULL     AND "programId" IS NULL) OR
+      ("scopeType" = 'INSTITUTION' AND "institutionId" IS NOT NULL AND "programId" IS NULL) OR
+      ("scopeType" = 'PROGRAM'     AND "institutionId" IS NULL     AND "programId" IS NOT NULL)
+    )
 );
-CREATE UNIQUE INDEX "FormQuestion_formId_key_key" ON "FormQuestion"("formId", "key");
-CREATE INDEX "FormQuestion_formId_order_idx" ON "FormQuestion"("formId", "order");
+CREATE INDEX "RoleAssignment_userId_revokedAt_idx" ON "RoleAssignment"("userId", "revokedAt");
+CREATE INDEX "RoleAssignment_institutionId_idx" ON "RoleAssignment"("institutionId");
+CREATE INDEX "RoleAssignment_programId_idx" ON "RoleAssignment"("programId");
+-- One live assignment per (user, role, scope). Prisma cannot express these.
+CREATE UNIQUE INDEX "RoleAssignment_live_platform_key"
+  ON "RoleAssignment"("userId", "roleId") WHERE "scopeType" = 'PLATFORM' AND "revokedAt" IS NULL;
+CREATE UNIQUE INDEX "RoleAssignment_live_institution_key"
+  ON "RoleAssignment"("userId", "roleId", "institutionId") WHERE "scopeType" = 'INSTITUTION' AND "revokedAt" IS NULL;
+CREATE UNIQUE INDEX "RoleAssignment_live_program_key"
+  ON "RoleAssignment"("userId", "roleId", "programId") WHERE "scopeType" = 'PROGRAM' AND "revokedAt" IS NULL;
 
-CREATE TABLE "ProgramApplication" (
-  "id"          TEXT NOT NULL,
-  "programId"   TEXT NOT NULL,
-  "userId"      TEXT NOT NULL,
-  "role"        "ProgramRole" NOT NULL,
-  "formId"      TEXT NOT NULL,
-  "formVersion" INTEGER NOT NULL,
-  "answers"     JSONB NOT NULL,
-  "status"      "ApplicationStatus" NOT NULL DEFAULT 'SUBMITTED',
-  "reviewerId"  TEXT,
-  "reviewedAt"  TIMESTAMP(3),
-  "adminNotes"  TEXT,
-  "semesterId"  TEXT,
-  "submittedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "createdAt"   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt"   TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "ProgramApplication_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "ProgramApplication_programId_fkey"
-    FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT "ProgramApplication_userId_fkey"
-    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT "ProgramApplication_formId_fkey"
-    FOREIGN KEY ("formId") REFERENCES "RegistrationForm"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT "ProgramApplication_semesterId_fkey"
-    FOREIGN KEY ("semesterId") REFERENCES "Semester"("id") ON DELETE SET NULL ON UPDATE CASCADE
+CREATE TABLE "PlatformSetting" (
+    "key" TEXT NOT NULL,
+    "value" TEXT NOT NULL,
+    "description" TEXT,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "PlatformSetting_pkey" PRIMARY KEY ("key")
 );
--- Partial unique index: at most ONE live application per (program, user,
--- role). Terminal states (REJECTED/WITHDRAWN) free the slot so a user may
--- re-apply. This is a business rule, not a blanket ban on multiple
--- applications across programmes or roles.
-CREATE UNIQUE INDEX "ProgramApplication_one_live_per_scope"
-  ON "ProgramApplication"("programId", "userId", "role")
-  WHERE "status" IN ('DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'WAITLISTED');
-CREATE INDEX "ProgramApplication_programId_status_submittedAt_idx"
-  ON "ProgramApplication"("programId", "status", "submittedAt");
-CREATE INDEX "ProgramApplication_userId_status_idx" ON "ProgramApplication"("userId", "status");
 
--- FK from Semester to MentorshipProgram (added after both tables exist).
-ALTER TABLE "Semester"
-  ADD CONSTRAINT "Semester_programId_fkey"
+-- ----------------------------------------------------------------------------
+-- 4. Indexes and foreign keys
+-- ----------------------------------------------------------------------------
+CREATE INDEX "Semester_programId_idx" ON "Semester"("programId");
+CREATE INDEX "Pairing_programId_status_idx" ON "Pairing"("programId", "status");
+CREATE INDEX "Meeting_programId_date_idx" ON "Meeting"("programId", "date");
+CREATE INDEX "Announcement_programId_createdAt_idx" ON "Announcement"("programId", "createdAt");
+CREATE INDEX "AuditLog_institutionId_createdAt_idx" ON "AuditLog"("institutionId", "createdAt");
+CREATE INDEX "AuditLog_programId_createdAt_idx" ON "AuditLog"("programId", "createdAt");
+
+ALTER TABLE "InstitutionDomain" ADD CONSTRAINT "InstitutionDomain_institutionId_fkey"
+  FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "InstitutionMembership" ADD CONSTRAINT "InstitutionMembership_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "InstitutionMembership" ADD CONSTRAINT "InstitutionMembership_institutionId_fkey"
+  FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "MentorshipProgram" ADD CONSTRAINT "MentorshipProgram_institutionId_fkey"
+  FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "MentorshipProgram" ADD CONSTRAINT "MentorshipProgram_ownerUserId_fkey"
+  FOREIGN KEY ("ownerUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ProgramMembership" ADD CONSTRAINT "ProgramMembership_programId_fkey"
+  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ProgramMembership" ADD CONSTRAINT "ProgramMembership_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "ProgramMembership" ADD CONSTRAINT "ProgramMembership_cohortId_fkey"
+  FOREIGN KEY ("cohortId") REFERENCES "Semester"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "RoleAssignment" ADD CONSTRAINT "RoleAssignment_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RoleAssignment" ADD CONSTRAINT "RoleAssignment_roleId_fkey"
+  FOREIGN KEY ("roleId") REFERENCES "AdminRole"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "RoleAssignment" ADD CONSTRAINT "RoleAssignment_institutionId_fkey"
+  FOREIGN KEY ("institutionId") REFERENCES "Institution"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RoleAssignment" ADD CONSTRAINT "RoleAssignment_programId_fkey"
+  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "RoleAssignment" ADD CONSTRAINT "RoleAssignment_grantedById_fkey"
+  FOREIGN KEY ("grantedById") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Semester" ADD CONSTRAINT "Semester_programId_fkey"
+  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Pairing" ADD CONSTRAINT "Pairing_programId_fkey"
+  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Meeting" ADD CONSTRAINT "Meeting_programId_fkey"
+  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Announcement" ADD CONSTRAINT "Announcement_programId_fkey"
   FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
-ALTER TABLE "Announcement"
-  ADD CONSTRAINT "Announcement_programId_fkey"
-  FOREIGN KEY ("programId") REFERENCES "MentorshipProgram"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- ----------------------------------------------------------------------------
+-- 5. Reference data: built-in administrative roles.
+--    Their permission lists are defined in src/lib/rbac/permissions.ts and
+--    read from code at runtime; the column is left empty for system roles.
+-- ----------------------------------------------------------------------------
+INSERT INTO "AdminRole" ("id", "key", "name", "description", "allowedScopes", "permissions", "isSystem", "updatedAt") VALUES
+  ('role_super_admin', 'super_admin', 'Super Admin',
+   'Full access to the whole Menty platform.',
+   ARRAY['PLATFORM']::"ScopeType"[], ARRAY[]::TEXT[], true, CURRENT_TIMESTAMP),
+  ('role_institution_admin', 'institution_admin', 'Institution Administrator',
+   'Manages one institution, its programmes and their coordinators.',
+   ARRAY['INSTITUTION']::"ScopeType"[], ARRAY[]::TEXT[], true, CURRENT_TIMESTAMP),
+  ('role_program_coordinator', 'program_coordinator', 'Programme Coordinator',
+   'Runs one mentorship programme.',
+   ARRAY['PROGRAM']::"ScopeType"[], ARRAY[]::TEXT[], true, CURRENT_TIMESTAMP),
+  ('role_program_assistant', 'program_assistant', 'Programme Assistant',
+   'Helps run one programme: registrations, sessions and communications, without settings.',
+   ARRAY['PROGRAM']::"ScopeType"[], ARRAY[]::TEXT[], true, CURRENT_TIMESTAMP)
+ON CONFLICT ("key") DO NOTHING;
 
--- ============================================================================
--- Section 2: BACKFILL of existing Menty data
---
--- The existing single-tenant deployment becomes the first institution and
--- programme. Institution name is configurable via psql variable so no
--- institution is permanently hardcoded:
---   psql -v legacy_institution="'MUBAS'" -v legacy_program="'MEI-MUBAS Engineering Mentorship'" ...
--- ============================================================================
+-- ----------------------------------------------------------------------------
+-- 6. Backfill: the existing deployment becomes MUBAS's engineering programme.
+--    Names are ordinary data and can be edited from the dashboard later.
+-- ----------------------------------------------------------------------------
+INSERT INTO "Institution" ("id", "slug", "name", "shortName", "status", "verificationStatus", "verifiedAt", "updatedAt")
+VALUES ('inst_mubas', 'mubas', 'Malawi University of Business and Applied Sciences', 'MUBAS',
+        'ACTIVE', 'VERIFIED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT ("slug") DO NOTHING;
 
-INSERT INTO "Institution" ("id", "name", "code", "status", "createdAt", "updatedAt")
-VALUES (gen_random_uuid()::text,
-        :'legacy_institution',
-        upper(regexp_replace(:'legacy_institution', '[^A-Za-z0-9]', '', 'g')),
-        'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT ("code") DO NOTHING;
+INSERT INTO "MentorshipProgram" (
+  "id", "slug", "name", "description", "ownerType", "institutionId", "status", "visibility",
+  "verificationStatus", "deliveryModel", "deliveryMode", "matchingMode", "enabledModules",
+  "requiresApproval", "careerTags", "publishedAt", "updatedAt")
+SELECT 'prog_mubas_engineering', 'mubas-engineering-mentorship',
+       'Faculty of Engineering Mentorship Programme',
+       'Peer mentorship for engineering students at MUBAS. Migrated from the original Menty deployment.',
+       'INSTITUTION', i."id", 'ACTIVE', 'PUBLIC', 'VERIFIED', 'ONE_TO_ONE', 'BLENDED', 'AUTOMATIC',
+       ARRAY['pairings','meetings','announcements','messages','cohorts','analytics'],
+       true, ARRAY[]::TEXT[], CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+FROM "Institution" i WHERE i."slug" = 'mubas'
+ON CONFLICT ("slug") DO NOTHING;
 
-INSERT INTO "MentorshipProgram" ("id", "institutionId", "name", "description", "status", "createdAt", "updatedAt")
-SELECT gen_random_uuid()::text, i.id, :'legacy_program',
-       'Migrated from the original single-tenant Menty deployment.',
-       'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-FROM "Institution" i
-WHERE i."name" = :'legacy_institution'
-ON CONFLICT ("institutionId", "name") DO NOTHING;
+-- The programme the original admin screens operate on until Phase 2/3
+-- replace them with per-programme dashboards.
+INSERT INTO "PlatformSetting" ("key", "value", "description", "updatedAt") VALUES
+  ('legacy.default_program_id', 'prog_mubas_engineering',
+   'Programme managed by the original admin dashboard and joined by the original registration form.',
+   CURRENT_TIMESTAMP)
+ON CONFLICT ("key") DO NOTHING;
 
--- Every existing cohort/semester now belongs to the legacy programme.
-UPDATE "Semester" s
-SET "programId" = p.id
-FROM "MentorshipProgram" p
-WHERE p."name" = :'legacy_program' AND s."programId" IS NULL;
+-- Every existing cohort, pairing, meeting and announcement belongs to it.
+UPDATE "Semester"     SET "programId" = 'prog_mubas_engineering' WHERE "programId" IS NULL;
+UPDATE "Pairing"      SET "programId" = 'prog_mubas_engineering' WHERE "programId" IS NULL;
+UPDATE "Meeting"      SET "programId" = 'prog_mubas_engineering' WHERE "programId" IS NULL;
+UPDATE "Announcement" SET "programId" = 'prog_mubas_engineering' WHERE "programId" IS NULL;
 
-UPDATE "Announcement" a
-SET "programId" = p.id
-FROM "MentorshipProgram" p
-WHERE p."name" = :'legacy_program' AND a."programId" IS NULL;
-
--- Existing ADMIN users become coordinators of the migrated programme so the
--- current operating team keeps working during the transition. Platform
--- admin (Super Admin) remains governed by User.role = 'ADMIN' until stage 6.
-INSERT INTO "ProgramCoordinator" ("id", "programId", "userId", "createdAt")
-SELECT gen_random_uuid()::text, p.id, u.id, CURRENT_TIMESTAMP
-FROM "User" u
-CROSS JOIN "MentorshipProgram" p
-WHERE u."role" = 'ADMIN' AND p."name" = :'legacy_program'
-ON CONFLICT ("programId", "userId") DO NOTHING;
-
--- Existing users become programme members with their historical role.
--- Approved users get ACTIVE membership; pending/rejected get INACTIVE so a
--- later approval workflow can activate them per-programme.
-INSERT INTO "ProgramMembership" ("id", "programId", "userId", "role", "status", "createdAt", "updatedAt")
-SELECT gen_random_uuid()::text, p.id, u.id,
-       u."role"::"ProgramRole",
-       CASE WHEN u."status" = 'APPROVED' THEN 'ACTIVE'::"MembershipStatus"
-            ELSE 'INACTIVE'::"MembershipStatus" END,
-       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-FROM "User" u
-CROSS JOIN "MentorshipProgram" p
-WHERE u."role" IN ('MENTOR', 'MENTEE') AND p."name" = :'legacy_program'
+-- Programme memberships from existing profiles. Account status maps to
+-- membership status; nothing about the account itself changes.
+INSERT INTO "ProgramMembership" ("id", "programId", "userId", "role", "status", "cohortId", "expertise", "capacity", "joinedAt", "createdAt", "updatedAt")
+SELECT 'pm_' || mp."id", 'prog_mubas_engineering', mp."userId", 'MENTOR',
+       CASE u."status" WHEN 'APPROVED' THEN 'ACTIVE'::"MembershipStatus"
+                       WHEN 'PENDING'  THEN 'PENDING'::"MembershipStatus"
+                       ELSE 'INACTIVE'::"MembershipStatus" END,
+       mp."semesterId", ARRAY[]::TEXT[], mp."maxMentees",
+       CASE WHEN u."status" = 'APPROVED' THEN mp."createdAt" END,
+       mp."createdAt", CURRENT_TIMESTAMP
+FROM "MentorProfile" mp JOIN "User" u ON u."id" = mp."userId"
 ON CONFLICT ("programId", "userId", "role") DO NOTHING;
 
--- Validate the backfill before considering section 3 work complete:
---   * every Semester has a programId
---   * every non-admin user has a membership
--- (both queries must return 0)
--- SELECT count(*) FROM "Semester" WHERE "programId" IS NULL;
--- SELECT count(*) FROM "User" u WHERE u."role" IN ('MENTOR','MENTEE')
---   AND NOT EXISTS (SELECT 1 FROM "ProgramMembership" m WHERE m."userId" = u.id);
+INSERT INTO "ProgramMembership" ("id", "programId", "userId", "role", "status", "cohortId", "expertise", "joinedAt", "createdAt", "updatedAt")
+SELECT 'pm_' || ep."id", 'prog_mubas_engineering', ep."userId", 'MENTEE',
+       CASE u."status" WHEN 'APPROVED' THEN 'ACTIVE'::"MembershipStatus"
+                       WHEN 'PENDING'  THEN 'PENDING'::"MembershipStatus"
+                       ELSE 'INACTIVE'::"MembershipStatus" END,
+       ep."semesterId", ARRAY[]::TEXT[],
+       CASE WHEN u."status" = 'APPROVED' THEN ep."createdAt" END,
+       ep."createdAt", CURRENT_TIMESTAMP
+FROM "MenteeProfile" ep JOIN "User" u ON u."id" = ep."userId"
+ON CONFLICT ("programId", "userId", "role") DO NOTHING;
 
--- ============================================================================
--- Idempotency note: every backfill statement uses ON CONFLICT DO NOTHING or
--- set-based WHERE ... IS NULL filters, so re-running this migration against
--- a database it has already been applied to creates no duplicate records.
--- ============================================================================
+-- Existing administrators keep everything they can do today: Super Admin on
+-- the platform, and coordinator of the migrated programme.
+INSERT INTO "RoleAssignment" ("id", "userId", "roleId", "scopeType", "updatedAt")
+SELECT 'ra_sa_' || u."id", u."id", 'role_super_admin', 'PLATFORM', CURRENT_TIMESTAMP
+FROM "User" u WHERE u."role" = 'ADMIN'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO "RoleAssignment" ("id", "userId", "roleId", "scopeType", "programId", "updatedAt")
+SELECT 'ra_pc_' || u."id", u."id", 'role_program_coordinator', 'PROGRAM', 'prog_mubas_engineering', CURRENT_TIMESTAMP
+FROM "User" u WHERE u."role" = 'ADMIN'
+ON CONFLICT DO NOTHING;
+
+-- ----------------------------------------------------------------------------
+-- 7. Verification: abort (and roll back everything) if the backfill missed
+--    anything.
+-- ----------------------------------------------------------------------------
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "Semester" WHERE "programId" IS NULL;
+  IF n > 0 THEN RAISE EXCEPTION 'Backfill check failed: % semesters without a programme', n; END IF;
+
+  SELECT count(*) INTO n FROM "Pairing" WHERE "programId" IS NULL;
+  IF n > 0 THEN RAISE EXCEPTION 'Backfill check failed: % pairings without a programme', n; END IF;
+
+  SELECT count(*) INTO n FROM "MentorProfile" mp
+   WHERE NOT EXISTS (SELECT 1 FROM "ProgramMembership" m WHERE m."userId" = mp."userId" AND m."role" = 'MENTOR');
+  IF n > 0 THEN RAISE EXCEPTION 'Backfill check failed: % mentor profiles without a membership', n; END IF;
+
+  SELECT count(*) INTO n FROM "MenteeProfile" ep
+   WHERE NOT EXISTS (SELECT 1 FROM "ProgramMembership" m WHERE m."userId" = ep."userId" AND m."role" = 'MENTEE');
+  IF n > 0 THEN RAISE EXCEPTION 'Backfill check failed: % mentee profiles without a membership', n; END IF;
+
+  SELECT count(*) INTO n FROM "User" u WHERE u."role" = 'ADMIN'
+   AND NOT EXISTS (SELECT 1 FROM "RoleAssignment" r WHERE r."userId" = u."id" AND r."roleId" = 'role_super_admin');
+  IF n > 0 THEN RAISE EXCEPTION 'Backfill check failed: % admins without Super Admin', n; END IF;
+END $$;
+
+COMMIT;

@@ -10,6 +10,12 @@ const dbMock = vi.hoisted(() => ({
   mentorInterest: { createMany: vi.fn() },
   menteeInterest: { createMany: vi.fn() },
   interest: { findFirst: vi.fn(), create: vi.fn() },
+  department: { findFirst: vi.fn() },
+  programme: { findFirst: vi.fn() },
+  platformSetting: { findUnique: vi.fn() },
+  mentorshipProgram: { findUnique: vi.fn() },
+  programMembership: { upsert: vi.fn() },
+  emailVerificationToken: { create: vi.fn() },
   $transaction: vi.fn(),
 }));
 
@@ -61,6 +67,12 @@ beforeEach(() => {
   dbMock.menteeProfile.findFirst.mockResolvedValue(null);
   dbMock.mentorProfile.findFirst.mockResolvedValue(null);
   dbMock.interest.findFirst.mockResolvedValue({ id: "int-1", name: "Football" });
+  dbMock.department.findFirst.mockResolvedValue({ id: "d-1", name: "Civil Engineering" });
+  dbMock.programme.findFirst.mockResolvedValue({ id: "p-1", name: "BSc Civil Engineering" });
+  dbMock.platformSetting.findUnique.mockResolvedValue({ key: "legacy.default_program_id", value: "prog-1" });
+  dbMock.mentorshipProgram.findUnique.mockResolvedValue({ id: "prog-1", institutionId: "inst-1" });
+  dbMock.programMembership.upsert.mockResolvedValue({});
+  dbMock.emailVerificationToken.create.mockResolvedValue({});
   dbMock.$transaction.mockImplementation(async (fn: (tx: typeof dbMock) => Promise<unknown>) => {
     dbMock.user.create.mockResolvedValue({
       id: "user-1",
@@ -79,8 +91,24 @@ describe("POST /api/register", () => {
     const res = await POST(request(menteePayload));
     expect(res.status).toBe(201);
     const body = (await res.json()) as { message: string };
-    expect(body.message).toMatch(/pending approval/i);
+    expect(body.message).toMatch(/reviewed by an administrator/i);
     expect(dbMock.$transaction).toHaveBeenCalledOnce();
+    // Only the default programme's cohorts are considered...
+    expect(dbMock.semester.findFirst).toHaveBeenCalledWith({
+      where: { isActive: true, isArchived: false, programId: "prog-1" },
+    });
+    // ...and the new account joins that programme as a PENDING mentee.
+    expect(dbMock.programMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          programId: "prog-1",
+          userId: "user-1",
+          role: "MENTEE",
+          status: "PENDING",
+          cohortId: "sem-1",
+        }),
+      })
+    );
   });
 
   it("rejects invalid payloads with 422", async () => {

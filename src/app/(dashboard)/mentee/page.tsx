@@ -50,7 +50,11 @@ export default async function MenteeDashboardPage() {
 
   const pairing = profile.pairings[0];
   const announcements = await db.announcement.findMany({
-    where: { audience: { in: ["ALL", "MENTEES"] } },
+    // This programme's announcements, plus platform-wide ones.
+    where: {
+      audience: { in: ["ALL", "MENTEES"] },
+      OR: [{ programId: profile.semester.programId }, { programId: null }],
+    },
     orderBy: { createdAt: "desc" },
     take: 3,
   });

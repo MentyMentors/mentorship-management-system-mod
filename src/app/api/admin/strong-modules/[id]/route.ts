@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requirePlatformPermission } from "@/lib/authz";
 import { catalogItemUpdateSchema } from "@/lib/validators";
 import { sanitizeText } from "@/lib/sanitize";
 import { logAudit } from "@/lib/audit";
@@ -15,7 +15,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session } = await requirePlatformPermission(PERMISSIONS.CATALOG_MANAGE);
     const { id } = await params;
 
     const parsed = catalogItemUpdateSchema.safeParse(await req.json());

@@ -1,5 +1,7 @@
 import { Video } from "lucide-react";
 import { db } from "@/lib/db";
+import { programPage } from "@/lib/admin-pages";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { formatDate } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,7 +18,9 @@ export const metadata = { title: "Meeting logs" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminMeetingsPage() {
+  const { scope } = await programPage(PERMISSIONS.MEETING_READ);
   const meetings = await db.meeting.findMany({
+    where: { programId: scope.programId },
     include: {
       pairing: {
         include: {

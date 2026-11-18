@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
+import { assertInProgram } from "@/lib/rbac/scope";
 import { reassignSchema } from "@/lib/validators";
 import { retryWaitlist } from "@/lib/pairing";
 import { sendMail } from "@/lib/email/mailer";
@@ -15,7 +16,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.PAIRING_MANAGE);
     const { id } = await params;
 
     const parsed = reassignSchema.safeParse(await req.json());
@@ -30,15 +31,20 @@ export async function PATCH(
         mentorProfile: { include: { user: true } },
       },
     });
-    if (!pairing || pairing.status !== "ACTIVE") {
+    assertInProgram(pairing, scope, "Pairing");
+    if (pairing.status !== "ACTIVE") {
       return Response.json({ error: "Active pairing not found" }, { status: 404 });
     }
 
     const newMentor = await db.mentorProfile.findUnique({
       where: { id: parsed.data.mentorProfileId },
-      include: { user: true, pairings: { where: { status: "ACTIVE" } } },
+      include: {
+        user: true,
+        semester: { select: { programId: true } },
+        pairings: { where: { status: "ACTIVE" } },
+      },
     });
-    if (!newMentor) {
+    if (!newMentor || newMentor.semester.programId !== scope.programId) {
       return Response.json({ error: "Mentor not found" }, { status: 404 });
     }
     if (newMentor.id === pairing.mentorProfileId) {
@@ -65,6 +71,7 @@ export async function PATCH(
           mentorProfileId: newMentor.id,
           menteeProfileId: pairing.menteeProfileId,
           semesterId: pairing.semesterId,
+          programId: scope.programId,
         },
       });
     });
@@ -98,6 +105,8 @@ export async function PATCH(
     await logAudit({
       actorId: session.user.id,
       action: "pairing.reassign",
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       targetType: "Pairing",
       targetId: newPairing.id,
       metadata: {
@@ -119,7 +128,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.PAIRING_MANAGE);
     const { id } = await params;
 
     const pairing = await db.pairing.findUnique({
@@ -129,7 +138,8 @@ export async function DELETE(
         menteeProfile: { include: { user: true } },
       },
     });
-    if (!pairing || pairing.status !== "ACTIVE") {
+    assertInProgram(pairing, scope, "Pairing");
+    if (pairing.status !== "ACTIVE") {
       return Response.json({ error: "Active pairing not found" }, { status: 404 });
     }
 
@@ -147,6 +157,8 @@ export async function DELETE(
     await logAudit({
       actorId: session.user.id,
       action: "pairing.end",
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       targetType: "Pairing",
       targetId: id,
       metadata: {

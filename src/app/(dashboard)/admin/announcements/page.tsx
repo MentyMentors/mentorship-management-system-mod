@@ -1,4 +1,6 @@
 import { db } from "@/lib/db";
+import { programPage } from "@/lib/admin-pages";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { formatDateTime } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +18,9 @@ export const metadata = { title: "Announcements" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminAnnouncementsPage() {
+  const { scope } = await programPage(PERMISSIONS.ANNOUNCEMENT_SEND);
   const announcements = await db.announcement.findMany({
+    where: { programId: scope.programId },
     include: { createdBy: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
     take: 30,

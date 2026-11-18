@@ -1,4 +1,6 @@
 import { db } from "@/lib/db";
+import { platformPage } from "@/lib/admin-pages";
+import { PERMISSIONS } from "@/lib/rbac/permissions";
 import { formatDateTime } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,6 +19,7 @@ export const metadata = { title: "Issue reports" };
 export const dynamic = "force-dynamic";
 
 export default async function AdminIssuesPage() {
+  await platformPage(PERMISSIONS.ISSUE_MANAGE);
   const issues = await db.issueReport.findMany({
     include: { reporter: { select: { name: true, email: true, role: true } } },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],

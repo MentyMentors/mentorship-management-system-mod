@@ -1,5 +1,13 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import {
+  AuthorizationError,
+  bumpSessionVersion,
+  errorResponse,
+  PERMISSIONS,
+  requireDefaultProgramPermission,
+  requirePlatformPermission,
+} from "@/lib/authz";
+import { can } from "@/lib/rbac/authorize";
 import { userDecisionSchema } from "@/lib/validators";
 import { attemptPairing, retryWaitlist } from "@/lib/pairing";
 import { sendMail } from "@/lib/email/mailer";
@@ -9,13 +17,18 @@ import {
   accountRejectedEmail,
 } from "@/lib/email/templates";
 
-/** PATCH /api/admin/users/:id — approve or reject a pending account. */
+/**
+ * PATCH /api/admin/users/:id — approve or reject a registration in the
+ * default programme. The target must be a member of that programme.
+ */
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, actor, scope } = await requireDefaultProgramPermission(
+      PERMISSIONS.REGISTRATION_REVIEW
+    );
     const { id } = await params;
 
     const parsed = userDecisionSchema.safeParse(await req.json());
@@ -25,10 +38,20 @@ export async function PATCH(
 
     const user = await db.user.findUnique({
       where: { id },
-      include: { mentorProfile: true, menteeProfile: true },
+      include: {
+        mentorProfile: true,
+        menteeProfile: true,
+        memberships: { where: { programId: scope.programId }, select: { id: true } },
+        roleAssignments: { where: { revokedAt: null }, select: { id: true } },
+      },
     });
-    if (!user) {
+    // Someone outside this programme looks like they do not exist.
+    if (!user || user.memberships.length === 0) {
       return Response.json({ error: "User not found" }, { status: 404 });
+    }
+    // Changing an administrator's account is a platform decision.
+    if (user.roleAssignments.length > 0 && !can(actor, PERMISSIONS.USER_SUSPEND, {})) {
+      throw new AuthorizationError(403, "Only a platform administrator can change this account");
     }
     if (user.id === session.user.id) {
       return Response.json(
@@ -38,13 +61,27 @@ export async function PATCH(
     }
 
     const status = parsed.data.action === "approve" ? "APPROVED" : "REJECTED";
-    await db.user.update({ where: { id }, data: { status } });
+    await db.$transaction([
+      // Legacy account gate (login requires APPROVED) — decoupled from
+      // programme approval in Phase 4.
+      db.user.update({ where: { id }, data: { status } }),
+      db.programMembership.updateMany({
+        where: { userId: id, programId: scope.programId },
+        data:
+          status === "APPROVED"
+            ? { status: "ACTIVE", joinedAt: new Date() }
+            : { status: "INACTIVE" },
+      }),
+    ]);
+    if (status === "REJECTED") await bumpSessionVersion(id);
 
     await logAudit({
       actorId: session.user.id,
       action: status === "APPROVED" ? "user.approve" : "user.reject",
       targetType: "User",
       targetId: user.id,
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       metadata: { name: user.name, email: user.email, role: user.role },
     });
 
@@ -74,13 +111,16 @@ export async function PATCH(
   }
 }
 
-/** DELETE /api/admin/users/:id — remove an account entirely. */
+/**
+ * DELETE /api/admin/users/:id — remove an account entirely. An account can
+ * span several programmes, so this is a platform-level action.
+ */
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session } = await requirePlatformPermission(PERMISSIONS.USER_DELETE);
     const { id } = await params;
 
     if (id === session.user.id) {

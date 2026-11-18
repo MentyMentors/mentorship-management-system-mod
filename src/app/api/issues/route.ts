@@ -41,8 +41,12 @@ export async function POST(req: Request): Promise<Response> {
       },
     });
 
+    // Issue reports are handled at platform level.
     const admins = await db.user.findMany({
-      where: { role: "ADMIN", status: "APPROVED" },
+      where: {
+        status: "APPROVED",
+        roleAssignments: { some: { scopeType: "PLATFORM", revokedAt: null } },
+      },
     });
 
     await db.notification.createMany({

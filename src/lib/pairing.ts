@@ -104,6 +104,7 @@ export async function attemptPairing(
     include: {
       user: true,
       interests: true,
+      semester: { select: { programId: true } },
       pairings: { where: { status: "ACTIVE" } },
     },
   });
@@ -115,6 +116,8 @@ export async function attemptPairing(
     return { status: "skipped" };
   }
 
+  // Candidates come from the mentee's own cohort, which belongs to exactly
+  // one programme, so a pairing can never cross programmes.
   const mentors = await db.mentorProfile.findMany({
     where: {
       semesterId: mentee.semesterId,
@@ -148,7 +151,12 @@ export async function attemptPairing(
   );
 
   if (!choice) {
-    await waitlistMentee(mentee.id, mentee.user.name, mentee.department);
+    await waitlistMentee(
+      mentee.id,
+      mentee.user.name,
+      mentee.department,
+      mentee.semester.programId
+    );
     return { status: "waitlisted" };
   }
 
@@ -168,6 +176,7 @@ export async function attemptPairing(
         mentorProfileId: chosenMentor.id,
         menteeProfileId: mentee.id,
         semesterId: mentee.semesterId,
+        programId: mentee.semester.programId,
         matchScore: choice.score,
       },
     });
@@ -208,16 +217,23 @@ export async function attemptPairing(
 async function waitlistMentee(
   menteeProfileId: string,
   menteeName: string,
-  department: string
+  department: string,
+  programId: string | null
 ): Promise<void> {
   await db.menteeProfile.update({
     where: { id: menteeProfileId },
     data: { waitlisted: true, waitlistedAt: new Date() },
   });
 
-  const admins = await db.user.findMany({
-    where: { role: "ADMIN", status: "APPROVED" },
-  });
+  // Tell the programme's own staff — not every administrator on Menty.
+  const admins = programId
+    ? await db.user.findMany({
+        where: {
+          status: "APPROVED",
+          roleAssignments: { some: { programId, revokedAt: null } },
+        },
+      })
+    : [];
 
   await db.notification.createMany({
     data: admins.map((admin) => ({

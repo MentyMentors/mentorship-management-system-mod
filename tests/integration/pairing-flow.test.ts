@@ -22,6 +22,7 @@ import { attemptPairing } from "@/lib/pairing";
 const approvedMentee = {
   id: "mentee-1",
   semesterId: "sem-1",
+  semester: { programId: "prog-1" },
   department: "Civil Engineering",
   sameDepartmentPreferred: false,
   user: { id: "u-mentee", name: "Mentee", email: "mentee@x.com", status: "APPROVED" },
@@ -71,6 +72,10 @@ describe("attemptPairing", () => {
         data: { waitlisted: false, waitlistedAt: null },
       })
     );
+    // the pairing is recorded in the mentee's programme
+    expect(dbMock.pairing.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ programId: "prog-1" }),
+    });
     // one email each to mentee and mentor
     expect(sendMail).toHaveBeenCalledTimes(2);
   });
@@ -85,6 +90,13 @@ describe("attemptPairing", () => {
       })
     );
     expect(dbMock.notification.createMany).toHaveBeenCalled();
+    // Only staff of the mentee's own programme are told.
+    expect(dbMock.user.findMany).toHaveBeenCalledWith({
+      where: {
+        status: "APPROVED",
+        roleAssignments: { some: { programId: "prog-1", revokedAt: null } },
+      },
+    });
     expect(sendMail).toHaveBeenCalled(); // admin alert
   });
 

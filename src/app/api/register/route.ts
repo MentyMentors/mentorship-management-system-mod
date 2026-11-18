@@ -8,6 +8,8 @@ import { resolveStrongModules } from "@/lib/strong-modules";
 import { sendMail } from "@/lib/email/mailer";
 import { verifyEmailEmail, APP_URL } from "@/lib/email/templates";
 import { generateVerificationToken } from "@/lib/tokens";
+import { upsertMembership } from "@/lib/memberships";
+import { getDefaultProgramScope } from "@/lib/rbac/scope";
 
 export async function POST(req: Request): Promise<Response> {
   const limit = rateLimit(clientKey(req, "register"), {
@@ -38,8 +40,11 @@ export async function POST(req: Request): Promise<Response> {
 
   const data = parsed.data;
 
+  // The original registration form joins the default programme (the
+  // migrated MUBAS programme). Per-programme forms arrive in Phase 4.
+  const { programId } = await getDefaultProgramScope();
   const semester = await db.semester.findFirst({
-    where: { isActive: true, isArchived: false },
+    where: { isActive: true, isArchived: false, programId },
   });
   if (!semester) {
     return Response.json(
@@ -113,6 +118,15 @@ export async function POST(req: Request): Promise<Response> {
         role: data.role,
         status: "PENDING",
       },
+    });
+
+    await upsertMembership(tx, {
+      programId,
+      userId: created.id,
+      role: data.role,
+      status: "PENDING",
+      cohortId: semester.id,
+      capacity: data.role === "MENTOR" ? data.maxMentees : null,
     });
 
     if (data.role === "MENTOR") {

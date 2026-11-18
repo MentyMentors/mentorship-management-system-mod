@@ -1,12 +1,12 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
 import { announcementSchema } from "@/lib/validators";
 import { sanitizeText, sanitizeMultiline } from "@/lib/sanitize";
 import { logAudit } from "@/lib/audit";
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.ANNOUNCEMENT_SEND);
 
     const parsed = announcementSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -18,7 +18,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const { title, body, audience, sendEmail } = parsed.data;
     const activeSemester = await db.semester.findFirst({
-      where: { isActive: true },
+      where: { isActive: true, programId: scope.programId },
     });
 
     const announcement = await db.announcement.create({
@@ -27,6 +27,7 @@ export async function POST(req: Request): Promise<Response> {
         body: sanitizeMultiline(body),
         audience,
         semesterId: activeSemester?.id,
+        programId: scope.programId,
         createdById: session.user.id,
         emailSent: sendEmail,
       },
@@ -35,6 +36,8 @@ export async function POST(req: Request): Promise<Response> {
     await logAudit({
       actorId: session.user.id,
       action: "announcement.create",
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       targetType: "Announcement",
       targetId: announcement.id,
       metadata: { title: announcement.title, audience, emailSent: sendEmail },

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
 import { manualPairingSchema } from "@/lib/validators";
 import { sendMail } from "@/lib/email/mailer";
 import { logAudit } from "@/lib/audit";
@@ -10,12 +10,16 @@ import {
 
 export async function GET(req: Request): Promise<Response> {
   try {
-    await requireSession(["ADMIN"]);
+    const { scope } = await requireDefaultProgramPermission(PERMISSIONS.PAIRING_READ);
     const url = new URL(req.url);
     const semesterId = url.searchParams.get("semesterId") ?? undefined;
 
     const pairings = await db.pairing.findMany({
-      where: { ...(semesterId ? { semesterId } : {}), status: "ACTIVE" },
+      where: {
+        programId: scope.programId,
+        ...(semesterId ? { semesterId } : {}),
+        status: "ACTIVE",
+      },
       include: {
         mentorProfile: { include: { user: { select: { id: true, name: true, email: true } } } },
         menteeProfile: { include: { user: { select: { id: true, name: true, email: true } } } },
@@ -33,7 +37,7 @@ export async function GET(req: Request): Promise<Response> {
 /** POST /api/admin/pairings — manually create a pairing. */
 export async function POST(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.PAIRING_MANAGE);
 
     const parsed = manualPairingSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -47,6 +51,7 @@ export async function POST(req: Request): Promise<Response> {
         where: { id: mentorProfileId },
         include: {
           user: true,
+          semester: { select: { programId: true } },
           pairings: { where: { status: "ACTIVE" } },
         },
       }),
@@ -54,12 +59,19 @@ export async function POST(req: Request): Promise<Response> {
         where: { id: menteeProfileId },
         include: {
           user: true,
+          semester: { select: { programId: true } },
           pairings: { where: { status: "ACTIVE" } },
         },
       }),
     ]);
 
-    if (!mentor || !mentee) {
+    // Both sides must belong to this programme; anything else looks absent.
+    if (
+      !mentor ||
+      !mentee ||
+      mentor.semester.programId !== scope.programId ||
+      mentee.semester.programId !== scope.programId
+    ) {
       return Response.json({ error: "Mentor or mentee not found" }, { status: 404 });
     }
     if (mentee.pairings.length > 0) {
@@ -91,6 +103,7 @@ export async function POST(req: Request): Promise<Response> {
           mentorProfileId: mentor.id,
           menteeProfileId: mentee.id,
           semesterId: mentee.semesterId,
+          programId: scope.programId,
         },
       });
       await tx.menteeProfile.update({
@@ -125,6 +138,8 @@ export async function POST(req: Request): Promise<Response> {
     await logAudit({
       actorId: session.user.id,
       action: "pairing.create",
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       targetType: "Pairing",
       targetId: pairing.id,
       metadata: { mentor: mentor.user.name, mentee: mentee.user.name },

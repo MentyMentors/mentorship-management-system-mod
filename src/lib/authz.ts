@@ -1,25 +1,43 @@
+import type { Role } from "@prisma/client";
+import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import type { ProgramRole, Role } from "@prisma/client";
-import type { Session } from "next-auth";
+import { loadActor } from "@/lib/rbac/actor";
+import {
+  AuthorizationError,
+  assertCan,
+  type Actor,
+  type ProgramRoleName,
+  isParticipant,
+  type ResourceScope,
+} from "@/lib/rbac/authorize";
+import type { Permission } from "@/lib/rbac/permissions";
+import {
+  getDefaultProgramScope,
+  resolveProgramScope,
+  type ProgramScope,
+} from "@/lib/rbac/scope";
 
-export class AuthorizationError extends Error {
-  constructor(
-    public status: number,
-    message: string
-  ) {
-    super(message);
-    this.name = "AuthorizationError";
-  }
-}
+export { AuthorizationError } from "@/lib/rbac/authorize";
+export { PERMISSIONS } from "@/lib/rbac/permissions";
 
 /**
- * Server-side guard for API routes and server actions.
- * Returns the session or throws an AuthorizationError.
+ * Server-side guards for API routes, server components and server actions.
  *
- * LEGACY COMPAT (stage 1): role checks against the global User.role enum are
- * kept working during the transition. New code must use the programme-scoped
- * guards below instead of relying on a global MENTOR/MENTEE role.
+ * Every sensitive operation validates, in order:
+ *   1. an authenticated, approved user           (requireSession)
+ *   2. the user's role assignments               (loadActor, from the DB)
+ *   3. the programme / institution scope         (resolved from the DB)
+ *   4. the permission for the operation          (assertCan)
+ *   5. that the record belongs to that scope     (assertInProgram, per route)
+ */
+
+/**
+ * Authenticated, approved session.
+ *
+ * `roles` filters on the LEGACY global User.role. It remains only for the
+ * original mentor/mentee self-service routes until Phase 3; administrative
+ * routes must use the permission guards below instead.
  */
 export async function requireSession(roles?: Role[]): Promise<Session> {
   const session = await auth();
@@ -37,137 +55,88 @@ export async function requireSession(roles?: Role[]): Promise<Session> {
   return session;
 }
 
-/**
- * Platform-level Super Admin guard.
- * Super Admin status derives ONLY from User.role === "ADMIN" (set through a
- * trusted administrative process, never via public registration) — never
- * from a client-supplied value, and never self-grantable.
- */
-export async function requireSuperAdmin(): Promise<Session> {
+export interface AuthorizedContext {
+  session: Session;
+  actor: Actor;
+}
+
+export async function requireActor(): Promise<AuthorizedContext> {
   const session = await requireSession();
-  if (session.user.role !== "ADMIN") {
-    throw new AuthorizationError(403, "Platform administrator access required");
-  }
-  return session;
+  const actor = await loadActor(session.user.id);
+  return { session, actor };
+}
+
+/** Requires `permission` within an already-resolved scope. */
+export async function requirePermission(
+  permission: Permission,
+  scope: ResourceScope = {}
+): Promise<AuthorizedContext> {
+  const context = await requireActor();
+  assertCan(context.actor, permission, scope);
+  return context;
+}
+
+/** Requires `permission` platform-wide (no institution or programme scope). */
+export function requirePlatformPermission(
+  permission: Permission
+): Promise<AuthorizedContext> {
+  return requirePermission(permission, {});
+}
+
+export interface ProgramContext extends AuthorizedContext {
+  scope: ProgramScope;
 }
 
 /**
- * Returns true when the user coordinates the given programme. Super Admins
- * pass through so they can intervene platform-wide.
+ * Requires `permission` inside one programme. `programId` may come from the
+ * request; its institution is looked up here, never trusted from the client.
  */
-export async function isProgramCoordinator(
-  userId: string,
+export async function requireProgramPermission(
+  permission: Permission,
   programId: string
-): Promise<boolean> {
-  const [membership, isAdmin] = await Promise.all([
-    db.programCoordinator.findUnique({
-      where: { programId_userId: { programId, userId } },
-    }),
-    db.user.findFirst({
-      where: { id: userId, role: "ADMIN", status: "APPROVED" },
-      select: { id: true },
-    }),
-  ]);
-  return Boolean(membership || isAdmin);
+): Promise<ProgramContext> {
+  const context = await requireActor();
+  const scope = await resolveProgramScope(programId);
+  assertCan(context.actor, permission, scope);
+  return { ...context, scope };
 }
 
 /**
- * Coordinator guard: the authenticated user must be explicitly assigned to
- * THIS programme (or be a platform Super Admin). The caller supplies the
- * programId from the route/body — this function validates the assignment;
- * callers must additionally verify the target record actually belongs to
- * the claimed programId to prevent IDOR.
+ * Same as requireProgramPermission, for the original single-programme admin
+ * screens: the programme is the configured default programme (the migrated
+ * MUBAS programme), never a value from the request.
  */
-export async function requireProgramCoordinator(
-  programId: string
-): Promise<Session> {
-  const session = await requireSession();
-  if (session.user.role === "ADMIN") return session;
-  if (!(await isProgramCoordinator(session.user.id, programId))) {
-    throw new AuthorizationError(
-      403,
-      "You are not a coordinator for this programme"
-    );
-  }
-  return session;
+export async function requireDefaultProgramPermission(
+  permission: Permission
+): Promise<ProgramContext> {
+  const context = await requireActor();
+  const scope = await getDefaultProgramScope();
+  assertCan(context.actor, permission, scope);
+  return { ...context, scope };
 }
 
-/**
- * Programme participant guard: the user must hold an ACTIVE membership in
- * this programme, optionally in a specific role (MENTOR | MENTEE).
- * This is the record that answers "what is this user's role HERE" — the
- * same account may hold different roles in different programmes.
- */
+/** Requires an ACTIVE membership in the programme (optionally in a role). */
 export async function requireProgramMembership(
   programId: string,
-  role?: ProgramRole
-): Promise<Session> {
-  const session = await requireSession();
-  const membership = await db.programMembership.findFirst({
-    where: {
-      programId,
-      userId: session.user.id,
-      status: "ACTIVE",
-      ...(role ? { role } : {}),
-    },
-    select: { id: true },
-  });
-  if (!membership) {
+  roles?: ProgramRoleName[]
+): Promise<ProgramContext> {
+  const context = await requireActor();
+  const scope = await resolveProgramScope(programId);
+  if (!isParticipant(context.actor, scope.programId, roles)) {
     throw new AuthorizationError(403, "No active membership in this programme");
   }
-  return session;
+  return { ...context, scope };
 }
 
 /**
- * Convenience: the user's programme-scoped role, or null when not an active
- * member. Never reads the deprecated global User.role.
+ * Invalidates every session of a user. Call after changing their status,
+ * role assignments or memberships so the change applies immediately.
  */
-export async function getProgramRole(
-  userId: string,
-  programId: string
-): Promise<ProgramRole | null> {
-  const membership = await db.programMembership.findFirst({
-    where: { programId, userId, status: "ACTIVE" },
-    select: { role: true },
+export async function bumpSessionVersion(userId: string): Promise<void> {
+  await db.user.update({
+    where: { id: userId },
+    data: { sessionVersion: { increment: 1 } },
   });
-  return membership?.role ?? null;
-}
-
-/**
- * Cohort guard: membership in the cohort's parent programme is required.
- * Verifies the cohort -> programme chain so a client cannot smuggle an
- * unrelated cohortId past the check.
- */
-export async function requireCohortAccess(cohortId: string): Promise<{
-  session: Session;
-  programId: string;
-}> {
-  const session = await requireSession();
-  const cohort = await db.semester.findUnique({
-    where: { id: cohortId },
-    select: { programId: true },
-  });
-  if (!cohort?.programId) {
-    throw new AuthorizationError(404, "Cohort not found");
-  }
-  if (session.user.role !== "ADMIN") {
-    const isCoordinator = await isProgramCoordinator(
-      session.user.id,
-      cohort.programId
-    );
-    const isMember = await db.programMembership.findFirst({
-      where: {
-        programId: cohort.programId,
-        userId: session.user.id,
-        status: "ACTIVE",
-      },
-      select: { id: true },
-    });
-    if (!isCoordinator && !isMember) {
-      throw new AuthorizationError(403, "No access to this cohort's programme");
-    }
-  }
-  return { session, programId: cohort.programId };
 }
 
 export function errorResponse(error: unknown): Response {

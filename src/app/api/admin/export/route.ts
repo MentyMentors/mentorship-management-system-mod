@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
 import { toCsv } from "@/lib/csv";
 import { logAudit } from "@/lib/audit";
 
@@ -9,12 +9,16 @@ import { logAudit } from "@/lib/audit";
  */
 export async function GET(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.PARTICIPANT_EXPORT);
 
     const url = new URL(req.url);
     const type = url.searchParams.get("type") ?? "mentors";
     const semesterId = url.searchParams.get("semesterId") ?? undefined;
-    const semesterFilter = semesterId ? { semesterId } : {};
+    // Always confined to this programme's cohorts, whatever semesterId says.
+    const semesterFilter = {
+      semester: { programId: scope.programId },
+      ...(semesterId ? { semesterId } : {}),
+    };
 
     let csv: string;
     let filename: string;
@@ -105,7 +109,10 @@ export async function GET(req: Request): Promise<Response> {
       }
       case "meetings": {
         const meetings = await db.meeting.findMany({
-          where: semesterId ? { pairing: { semesterId } } : {},
+          where: {
+            programId: scope.programId,
+            ...(semesterId ? { pairing: { semesterId } } : {}),
+          },
           include: {
             pairing: {
               include: {
@@ -135,6 +142,8 @@ export async function GET(req: Request): Promise<Response> {
     await logAudit({
       actorId: session.user.id,
       action: "data.export",
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       metadata: { type, semesterId },
     });
 

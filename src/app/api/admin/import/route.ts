@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requireDefaultProgramPermission } from "@/lib/authz";
+import { upsertMembership } from "@/lib/memberships";
 import { parseCsvRecords } from "@/lib/csv";
 import { resolveInterestIds } from "@/lib/interests";
 import { normalizeEmail, sanitizeText } from "@/lib/sanitize";
@@ -24,7 +25,7 @@ import {
  */
 export async function POST(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session, scope } = await requireDefaultProgramPermission(PERMISSIONS.PARTICIPANT_IMPORT);
 
     const form = await req.formData();
     const file = form.get("file");
@@ -38,7 +39,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const semester = await db.semester.findFirst({
-      where: { isActive: true, isArchived: false },
+      where: { isActive: true, isArchived: false, programId: scope.programId },
     });
     if (!semester) {
       return Response.json({ error: "No active semester" }, { status: 409 });
@@ -122,6 +123,15 @@ export async function POST(req: Request): Promise<Response> {
           },
         });
 
+        await upsertMembership(tx, {
+          programId: scope.programId,
+          userId: user.id,
+          role: data.role,
+          status: "ACTIVE",
+          cohortId: semester.id,
+          capacity: data.role === "MENTOR" ? data.maxMentees : null,
+        });
+
         if (data.role === "MENTOR") {
           const profile = await tx.mentorProfile.create({
             data: {
@@ -169,6 +179,8 @@ export async function POST(req: Request): Promise<Response> {
     await logAudit({
       actorId: session.user.id,
       action: "data.import",
+      programId: scope.programId,
+      institutionId: scope.institutionId,
       metadata: {
         type,
         created: results.created,

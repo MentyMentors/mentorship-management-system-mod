@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireSession, errorResponse } from "@/lib/authz";
+import { errorResponse, PERMISSIONS, requirePlatformPermission } from "@/lib/authz";
 import { catalogItemCreateSchema } from "@/lib/validators";
 import { sanitizeText } from "@/lib/sanitize";
 import { logAudit } from "@/lib/audit";
@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit";
 /** GET /api/admin/strong-modules — every strong module, including inactive. */
 export async function GET(): Promise<Response> {
   try {
-    await requireSession(["ADMIN"]);
+    await requirePlatformPermission(PERMISSIONS.CATALOG_MANAGE);
     const strongModules = await db.strongModule.findMany({ orderBy: { name: "asc" } });
     return Response.json({ strongModules });
   } catch (error) {
@@ -18,7 +18,7 @@ export async function GET(): Promise<Response> {
 /** POST /api/admin/strong-modules — add a new strong module. */
 export async function POST(req: Request): Promise<Response> {
   try {
-    const session = await requireSession(["ADMIN"]);
+    const { session } = await requirePlatformPermission(PERMISSIONS.CATALOG_MANAGE);
 
     const parsed = catalogItemCreateSchema.safeParse(await req.json());
     if (!parsed.success) {

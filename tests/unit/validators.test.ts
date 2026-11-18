@@ -78,11 +78,13 @@ describe("mentorRegistrationSchema", () => {
     ).toBe(false);
   });
 
-  it("rejects unknown departments", () => {
+  // Departments are an admin-managed catalogue checked against the database
+  // by /api/register; the schema only requires one to be chosen.
+  it("requires a department", () => {
     expect(
       mentorRegistrationSchema.safeParse({
         ...validMentor,
-        department: "Astrology",
+        department: "",
       }).success
     ).toBe(false);
   });

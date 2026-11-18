@@ -1,66 +1,46 @@
-# Menty Multitenant Transformation — Implementation Notes
+# Menty multi-tenancy — developer guide
 
-## Status: Stage 1 complete (database foundation + authorization core)
+Status: **Phase 1 (foundation) implemented.** Design: `docs/phase-0/`. Deployment:
+`docs/phase-1/DEPLOY.md`.
 
-This directory contains the first dependency-ordered increment of the
-multitenant transformation, produced against the audited codebase of
-`MentyMentors/mentorship-management-system-mod` (Next.js 15.1, NextAuth v5
-beta, Prisma 6, PostgreSQL/Neon, Vitest).
+## The model in one paragraph
 
-## Files
+A **programme** (`MentorshipProgram`) is the tenant boundary. It is owned by an institution, by
+an individual (independent), or by Menty itself. A person has **one** `User` account. They take
+part in programmes through `ProgramMembership` (one row per programme and role: MENTOR, MENTEE,
+PRESENTER, FACILITATOR, PARTICIPANT) and administer through `RoleAssignment` (a role at
+PLATFORM, INSTITUTION or PROGRAM scope). `User.role` is legacy: it still routes the original
+mentor/mentee dashboards until Phase 3, and is never used to authorise administrative actions.
 
-| File | Purpose |
-|---|---|
-| `prisma/schema.prisma` | Full target schema (stage 1). Drop-in replacement. |
-| `prisma/migrations/20261023000000_multitenant_core/migration.sql` | DDL + idempotent backfill |
-| `src/lib/authz.ts` | Extended guards: `requireSuperAdmin`, `requireProgramCoordinator`, `requireProgramMembership`, `requireCohortAccess`, `getProgramRole` |
-| `src/lib/domains.ts` | Exact-match institutional email-domain validation |
-| `src/lib/program-roles.ts` | Pure role/scope rules (unit-tested) |
-| `tests/unit/domains.test.ts` | Domain policy tests (7–9, 11) |
-| `tests/unit/program-roles.test.ts` | Identity/role tests (1–5, 30) |
+## Authorising code — the rules
 
-## Applying the migration (development)
+1. Use a guard from `src/lib/authz.ts`, never `session.user.role`:
+   - `requireProgramPermission(PERMISSIONS.X, programId)` — programme-scoped API routes;
+   - `requireDefaultProgramPermission(PERMISSIONS.X)` — the original single-programme admin
+     screens (the programme comes from the `legacy.default_program_id` platform setting);
+   - `requirePlatformPermission(PERMISSIONS.X)` — catalogues, audit log, issue reports;
+   - `requireProgramMembership(programId, roles?)` — participant features.
+   - Server components: `programPage()` / `platformPage()` from `src/lib/admin-pages.ts`.
+2. Permission keys live in `src/lib/rbac/permissions.ts`. Built-in roles' permissions are
+   defined there too (authoritative in code); custom roles store theirs in `AdminRole`.
+3. A programme id from the client is a lookup key only. Scopes are resolved from the database
+   (`src/lib/rbac/scope.ts`). After loading a record by id, call `assertInProgram(record, scope)`
+   so records of other programmes return 404.
+4. Every query in a programme-scoped route filters by `programId`.
+5. Creating a mentor/mentee profile? Call `upsertMembership()` in the same transaction.
+6. Changing someone's status or roles? Call `bumpSessionVersion(userId)` so their open sessions
+   pick it up on the next request.
+7. Audit entries carry `programId` / `institutionId`; secrets in metadata are redacted.
 
-```bash
-# 1. Fresh dev database
-createdb menty_dev
-psql -v legacy_institution="'MUBAS'" \
-     -v legacy_program="'MEI-MUBAS Engineering Mentorship'" \
-     menty_dev -f prisma/migrations/20261023000000_multitenant_core/migration.sql
+## Tests
 
-# 2. Point prisma at it and verify
-DATABASE_URL=... npx prisma migrate resolve --applied 20261023000000_multitenant_core
-DATABASE_URL=... npx prisma generate
-DATABASE_URL=... npx prisma validate
-```
+- `tests/unit/rbac.test.ts` — scope rules and privilege-escalation cases (cross-programme,
+  cross-institution, vertical).
+- `tests/unit/program-roles.test.ts` — one account, many programme roles.
+- `tests/unit/migrations.test.ts` — no psql-only syntax and no row deletion in migrations.
 
-Then run the validation queries included at the end of the migration SQL —
-both must return 0 — before touching application code.
+## Rehearsing migrations locally
 
-`psql` variables let you name the migrated institution/programme for YOUR
-data; nothing is permanently hardcoded. Adjust the two `-v` values to match
-the real legacy deployment.
-
-## Staged rollout
-
-1. **Stage 1 (this increment):** new tables/columns, profile uniqueness
-   dropped, legacy data backfilled. Old code keeps working (all new columns
-   nullable; `User.role` untouched).
-2. **Stage 2:** copy `src/lib/authz.ts`, `src/lib/domains.ts`,
-   `src/lib/program-roles.ts` into the repo; switch admin API routes from
-   `requireSession(["ADMIN"])` to the new guards; wire `findInstitutionByEmail`
-   into `/api/register`.
-3. **Stage 3:** programme discovery + application workflow on top of
-   `MentorshipProgram` / `RegistrationForm` / `ProgramApplication`.
-4. **Stage 4:** coordinator + super-admin dashboards; pairing engine gains
-   programme-scope checks via `pairingScopeValid`.
-5. **Stage 5:** announcements/emails scoped by `programId`; exports enforce
-   programme scope.
-6. **Stage 6 (separate migration, only after 1–5 verified):** make
-   `Semester.programId` / `Announcement.programId` NOT NULL; remove
-   `MENTOR`/`MENTEE` from the global `Role` enum.
-
-## Environment variables
-
-No new secrets. Optional: `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`
-(existing). Migration uses psql variables, not env vars, by design.
+`scripts/migration-rehearsal/legacy-sample.sql` is synthetic data shaped like production before
+Phase 1. Load it into a database at the pre-October migrations, then apply the Phase 1
+migration and compare.
