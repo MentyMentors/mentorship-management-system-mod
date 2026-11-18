@@ -15,25 +15,8 @@ import {
   type Appearance,
 } from "@/lib/theme/tokens";
 
-export interface ThemeValue {
-  primaryColor: string;
-  secondaryColor: string;
-  accentColor: string;
-  backgroundColor: string;
-  foregroundColor: string;
-  radius: (typeof RADIUS_OPTIONS)[number];
-  appearance: Appearance;
-}
-
-export const DEFAULT_THEME_VALUE: ThemeValue = {
-  primaryColor: MENTY_THEME.primaryColor,
-  secondaryColor: MENTY_THEME.secondaryColor,
-  accentColor: MENTY_THEME.accentColor,
-  backgroundColor: MENTY_THEME.backgroundColor,
-  foregroundColor: MENTY_THEME.foregroundColor,
-  radius: "0.75rem",
-  appearance: "SYSTEM",
-};
+import { DEFAULT_THEME_VALUE, type ThemeValue } from "@/lib/theme/theme-value";
+export { DEFAULT_THEME_VALUE, type ThemeValue } from "@/lib/theme/theme-value";
 
 /** Generic starting palettes. Coordinators can change every colour. */
 const PRESETS: { name: string; value: Partial<ThemeValue> }[] = [

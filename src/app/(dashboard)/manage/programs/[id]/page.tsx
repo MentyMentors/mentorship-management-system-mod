@@ -9,8 +9,8 @@ import { listActiveInstitutions } from "@/services/institutions";
 import { listStaff } from "@/services/staff";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
-import { fromProgram } from "@/components/program/program-fields";
-import { DEFAULT_THEME_VALUE, type ThemeValue } from "@/components/program/theme-editor";
+import { fromProgram } from "@/lib/program-form";
+import { DEFAULT_THEME_VALUE, type ThemeValue } from "@/lib/theme/theme-value";
 import { ProgramSettings } from "@/components/program/program-settings";
 
 export const dynamic = "force-dynamic";
