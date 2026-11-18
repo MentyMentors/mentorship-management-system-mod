@@ -11,10 +11,11 @@
 --
 -- Expand-only: adds enums, tables and nullable columns, then backfills.
 -- No existing row is updated except to set a new programId column, and no
--- row is deleted. Runs in one transaction.
+-- row is deleted. PostgreSQL applies it atomically (one multi-statement
+-- migration); there is deliberately no explicit BEGIN/COMMIT, so if a
+-- statement fails the real error is reported.
 -- ============================================================================
 
-BEGIN;
 
 -- ----------------------------------------------------------------------------
 -- 0. Clean up anything a partial run of the October draft may have left.
@@ -410,4 +411,3 @@ BEGIN
   IF n > 0 THEN RAISE EXCEPTION 'Backfill check failed: % admins without Super Admin', n; END IF;
 END $$;
 
-COMMIT;

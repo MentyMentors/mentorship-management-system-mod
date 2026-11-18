@@ -33,8 +33,7 @@ describe("prisma migrations", () => {
   // the connection stays in an aborted transaction and Prisma can only
   // report "current transaction is aborted" (Nov 2026 Phase 2 deploy).
   // PostgreSQL already applies a multi-statement migration atomically.
-  const GRANDFATHERED = new Set(["20261023000000_multitenant_core"]);
-  it.each(migrationFiles.filter((m) => !GRANDFATHERED.has(m.name)))(
+  it.each(migrationFiles)(
     "$name has no explicit transaction control",
     ({ sql }) => {
       expect(withoutComments(sql)).not.toMatch(/^\s*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION)\s*;/im);
