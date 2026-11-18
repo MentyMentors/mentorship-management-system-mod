@@ -18,7 +18,7 @@ export type ProgramRole =
 export interface MembershipLike {
   programId: string;
   role: ProgramRole;
-  status: "PENDING" | "ACTIVE" | "INACTIVE" | "SUSPENDED" | "REMOVED";
+  status: "PENDING" | "ACTIVE" | "INACTIVE" | "SUSPENDED" | "REMOVED" | "REJECTED" | "WAITLISTED" | "WITHDRAWN";
 }
 
 /** Every ACTIVE role the user holds in one programme (empty when none). */

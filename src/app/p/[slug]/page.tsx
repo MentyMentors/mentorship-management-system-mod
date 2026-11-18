@@ -47,17 +47,14 @@ export default async function PublicProgramPage({ params, searchParams }: Props)
   const reg = registrationState(program);
   const eligibility = (program.eligibility ?? {}) as { mode?: string; departments?: string[]; yearsOfStudy?: number[]; note?: string };
 
+  const btn = "inline-flex h-10 items-center rounded-program bg-program-primary px-5 text-sm font-semibold text-program-primary-foreground";
   const cta = data.isMember ? (
-    <Link href="/redirect" className="inline-flex h-10 items-center rounded-program bg-program-primary px-5 text-sm font-semibold text-program-primary-foreground">
-      Open my dashboard
-    </Link>
-  ) : reg.open && data.usesLegacyRegistration ? (
-    <Link href="/register" className="inline-flex h-10 items-center rounded-program bg-program-primary px-5 text-sm font-semibold text-program-primary-foreground">
-      Join programme
-    </Link>
+    <Link href={`/dashboard/programs/${program.id}`} className={btn}>Open my programme</Link>
+  ) : reg.open && program.visibility !== "PRIVATE" ? (
+    <Link href={data.usesLegacyRegistration ? "/register" : `/p/${program.slug}/join`} className={btn}>Join programme</Link>
   ) : (
     <span className="inline-flex h-10 items-center rounded-program bg-program-accent px-5 text-sm font-semibold text-program-accent-foreground">
-      {reg.open ? "Online registration coming soon" : reg.label}
+      {reg.label}
     </span>
   );
 

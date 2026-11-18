@@ -273,3 +273,51 @@ export function institutionDecisionEmail(input: {
     ),
   };
 }
+
+/** Confirmation after someone registers for a programme. */
+export function joinReceivedEmail(input: { name: string; programName: string; status: "ACTIVE" | "PENDING" | "WAITLISTED"; url: string }) {
+  const body =
+    input.status === "ACTIVE"
+      ? `<p>You have joined <strong>${escapeHtml(input.programName)}</strong>. Welcome!</p>`
+      : input.status === "WAITLISTED"
+        ? `<p>Your registration for <strong>${escapeHtml(input.programName)}</strong> is on the waiting list because the programme is full. We will let you know if a place opens.</p>`
+        : `<p>Your registration for <strong>${escapeHtml(input.programName)}</strong> has been received. The programme team will review it and you will get an email with their decision.</p>`;
+  return {
+    subject: `${APP_NAME}: ${input.status === "ACTIVE" ? "Welcome to" : "Registration received —"} ${input.programName}`,
+    html: layout(input.status === "ACTIVE" ? "You're in" : "Registration received", `<p>Hi ${escapeHtml(input.name)},</p>${body}${button(input.url, "Open my programme")}`),
+  };
+}
+
+/** A coordinator's decision on a registration. */
+export function joinDecisionEmail(input: {
+  name: string;
+  programName: string;
+  decision: "approve" | "reject" | "waitlist" | "remove";
+  note?: string | null;
+  url: string;
+}) {
+  const lines: Record<typeof input.decision, string> = {
+    approve: `Your registration for <strong>${escapeHtml(input.programName)}</strong> has been approved. Welcome!`,
+    reject: `Your registration for <strong>${escapeHtml(input.programName)}</strong> was not accepted this time.`,
+    waitlist: `You are on the waiting list for <strong>${escapeHtml(input.programName)}</strong>. We will let you know if a place opens.`,
+    remove: `You are no longer a participant in <strong>${escapeHtml(input.programName)}</strong>.`,
+  };
+  return {
+    subject: `${APP_NAME}: ${input.programName} — registration update`,
+    html: layout(
+      "Registration update",
+      `<p>Hi ${escapeHtml(input.name)},</p><p>${lines[input.decision]}</p>${input.note ? `<p><em>${escapeHtml(input.note)}</em></p>` : ""}${input.decision === "approve" ? button(input.url, "Open my programme") : ""}`
+    ),
+  };
+}
+
+/** Email verification for accounts created with the general sign-up. */
+export function signupVerifyEmail(name: string, verifyUrl: string) {
+  return {
+    subject: `${APP_NAME}: Confirm your email address`,
+    html: layout(
+      "Confirm your email",
+      `<p>Hi ${escapeHtml(name)},</p><p>Welcome to ${escapeHtml(APP_NAME)}. Confirm your email address to finish creating your account. The link expires in 24 hours.</p>${button(verifyUrl, "Confirm email")}`
+    ),
+  };
+}

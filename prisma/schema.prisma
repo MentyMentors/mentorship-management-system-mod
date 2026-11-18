@@ -155,6 +155,12 @@ enum MembershipStatus {
   INACTIVE
   SUSPENDED
   REMOVED
+  /// Registration declined by the programme.
+  REJECTED
+  /// Eligible, waiting for a place.
+  WAITLISTED
+  /// The participant withdrew.
+  WITHDRAWN
 }
 
 // ----- Identity --------------------------------------------------------------
@@ -470,6 +476,11 @@ model ProgramMembership {
   expertise String[]
   capacity  Int?
   joinedAt  DateTime?
+  /// Message from the applicant when joining (registration forms: Phase 4).
+  applicationNote String?
+  reviewedAt      DateTime?
+  reviewedById    String?
+  reviewNote      String?
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 

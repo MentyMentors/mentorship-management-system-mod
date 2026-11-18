@@ -14,7 +14,7 @@ export default async function RedirectPage() {
     case "MENTOR":
       redirect("/mentor");
     case "USER":
-      redirect("/manage");
+      redirect("/dashboard");
     default:
       redirect("/mentee");
   }

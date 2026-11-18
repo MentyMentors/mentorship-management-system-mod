@@ -190,6 +190,12 @@ export default function LandingPage() {
             </Link>
             <nav className="hidden items-center gap-1 md:flex">
               <Button variant="ghost" size="sm" asChild>
+                <Link href="/programs">Programmes</Link>
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/run">Run a programme</Link>
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
                 <a href="#how">How it works</a>
               </Button>
               <Button variant="ghost" size="sm" asChild>
@@ -211,7 +217,7 @@ export default function LandingPage() {
                 <Link href="/login">Log in</Link>
               </Button>
               <Button variant="accent" size="sm" asChild>
-                <Link href="/register">
+                <Link href="/signup">
                   Get started <ArrowRight className="hidden h-4 w-4 sm:inline" />
                 </Link>
               </Button>
@@ -253,17 +259,18 @@ export default function LandingPage() {
 
           <div className="container relative flex flex-col items-center gap-7 py-24 text-center sm:py-28">
             <h1 className="max-w-3xl text-balance font-display text-4xl font-extrabold uppercase leading-[1.05] tracking-tight text-white sm:text-6xl sm:leading-[1.02]">
-              Find your guide on campus
+              Find your guide
             </h1>
             <p className="max-w-xl text-balance text-lg text-white/80">
-              Menty pairs you with a fellow student who&apos;s already walked
-              your road. They know better, so they guide better.
+              Menty pairs you with someone who&apos;s already walked your road —
+              and hosts mentorship programmes run by universities, organisations
+              and mentors across Malawi.
             </p>
 
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button size="lg" variant="accent" asChild>
-                <Link href="/register?role=mentee">
-                  Join as a mentee <ArrowRight className="h-4 w-4" />
+                <Link href="/find-a-mentor?role=MENTEE">
+                  Find your mentor <ArrowRight className="h-4 w-4" />
                 </Link>
               </Button>
               <Button
@@ -272,12 +279,50 @@ export default function LandingPage() {
                 className="border-white/25 bg-white/5 text-white hover:bg-white/15 hover:text-white"
                 asChild
               >
-                <Link href="/register?role=mentor">Become a mentor</Link>
+                <Link href="/find-a-mentor?role=MENTOR">Become a mentor</Link>
               </Button>
             </div>
           </div>
         </section>
 
+
+        {/* ---------- Three ways in ---------- */}
+        <section className="relative z-10 -mt-16 pb-8">
+          <div className="container grid gap-4 md:grid-cols-3">
+            {[
+              {
+                title: "Find your mentor",
+                body: "Join Menty's volunteer network and get matched with a mentor — or volunteer to guide others.",
+                cta: "Find a mentor",
+                href: "/find-a-mentor?role=MENTEE",
+                secondary: { label: "Become a mentor", href: "/find-a-mentor?role=MENTOR" },
+              },
+              {
+                title: "Find a mentorship programme",
+                body: "Browse programmes run by universities, organisations and mentors. Most are open to students from any institution.",
+                cta: "Browse programmes",
+                href: "/programs",
+              },
+              {
+                title: "Run a mentorship programme",
+                body: "Universities, lecturers and organisations can launch a branded programme in minutes — no software to build.",
+                cta: "Start a programme",
+                href: "/run",
+              },
+            ].map((c) => (
+              <div key={c.title} className="glass flex flex-col rounded-3xl p-6 shadow-glass-lg">
+                <h2 className="font-display text-lg font-extrabold uppercase tracking-tight text-navy dark:text-foreground">{c.title}</h2>
+                <p className="mt-2 flex-1 text-sm text-muted-foreground">{c.body}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button size="sm" asChild><Link href={c.href}>{c.cta} <ArrowRight className="h-4 w-4" /></Link></Button>
+                  {c.secondary && (
+                    <Button size="sm" variant="outline" asChild><Link href={c.secondary.href}>{c.secondary.label}</Link></Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         {/* ---------- About / Positioning ---------- */}
         <section id="about" className="relative overflow-hidden bg-navy py-24">
@@ -432,7 +477,7 @@ export default function LandingPage() {
                 with the younger generation and let&apos;s grow together!
               </p>
               <Button size="lg" variant="navy" className="mt-6" asChild>
-                <Link href="/register?role=mentor">Volunteer as a mentor</Link>
+                <Link href="/find-a-mentor?role=MENTOR">Volunteer as a mentor</Link>
               </Button>
             </div>
             <div className="relative aspect-[4/3] overflow-hidden rounded-3xl shadow-glass-lg">
@@ -472,7 +517,7 @@ export default function LandingPage() {
                 passed that road and come out victorious?
               </p>
               <Button size="lg" variant="accent" className="mt-6" asChild>
-                <Link href="/register?role=mentee">Join as a mentee</Link>
+                <Link href="/find-a-mentor?role=MENTEE">Join as a mentee</Link>
               </Button>
             </div>
           </div>
@@ -695,8 +740,8 @@ export default function LandingPage() {
               </p>
               <ul className="mt-4 space-y-3 text-sm">
                 <li><a href="#how" className="hover:text-white">How it works</a></li>
-                <li><Link href="/register?role=mentee" className="hover:text-white">Apply as Mentee</Link></li>
-                <li><Link href="/register?role=mentor" className="hover:text-white">Become a Mentor</Link></li>
+                <li><Link href="/find-a-mentor?role=MENTEE" className="hover:text-white">Apply as Mentee</Link></li>
+                <li><Link href="/find-a-mentor?role=MENTOR" className="hover:text-white">Become a Mentor</Link></li>
               </ul>
             </div>
             <div>

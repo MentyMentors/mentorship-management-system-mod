@@ -11,6 +11,7 @@ import {
   Flag,
   Handshake,
   Building2,
+  Compass,
   Layers,
   LayoutDashboard,
   LifeBuoy,
@@ -46,6 +47,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/admin/issues", label: "Issue reports", icon: Flag },
     { href: "/admin/audit-log", label: "Audit log", icon: ScrollText },
     { href: "/manage", label: "Programmes", icon: Building2 },
+    { href: "/dashboard", label: "My programmes", icon: Compass },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/search", label: "Search", icon: Search },
   ],
@@ -55,6 +57,7 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/mentor/meetings", label: "Meetings", icon: CalendarDays },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/announcements", label: "Programme", icon: ClipboardList },
+    { href: "/dashboard", label: "My programmes", icon: Compass },
     { href: "/manage", label: "Run a programme", icon: Building2 },
     { href: "/issues", label: "Report Issue", icon: BookOpen },
     { href: "/profile", label: "Settings", icon: Settings },
@@ -64,12 +67,15 @@ export const NAV_BY_ROLE: Record<Role, NavItem[]> = {
     { href: "/mentee/meetings", label: "Meetings", icon: CalendarDays },
     { href: "/messages", label: "Messages", icon: MessagesSquare },
     { href: "/announcements", label: "Programme", icon: ClipboardList },
+    { href: "/dashboard", label: "My programmes", icon: Compass },
     { href: "/manage", label: "Run a programme", icon: Building2 },
     { href: "/issues", label: "Report Issue", icon: BookOpen },
     { href: "/profile", label: "Settings", icon: Settings },
   ],
   USER: [
-    { href: "/manage", label: "My programmes", icon: Building2 },
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/programs", label: "Find programmes", icon: Compass },
+    { href: "/manage", label: "Run a programme", icon: Building2 },
     { href: "/announcements", label: "Announcements", icon: ClipboardList },
     { href: "/issues", label: "Report Issue", icon: BookOpen },
     { href: "/profile", label: "Settings", icon: Settings },
@@ -95,6 +101,7 @@ export function SidebarNavLinks({
           pathname === item.href ||
           (item.href !== "/admin" &&
             item.href !== "/manage" &&
+            item.href !== "/dashboard" &&
             item.href !== "/mentor" &&
             item.href !== "/mentee" &&
             pathname.startsWith(item.href));

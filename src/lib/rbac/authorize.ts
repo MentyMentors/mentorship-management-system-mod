@@ -24,7 +24,7 @@ export interface ActorAssignment {
 export interface ActorMembership {
   programId: string;
   role: ProgramRoleName;
-  status: "PENDING" | "ACTIVE" | "INACTIVE" | "SUSPENDED" | "REMOVED";
+  status: "PENDING" | "ACTIVE" | "INACTIVE" | "SUSPENDED" | "REMOVED" | "REJECTED" | "WAITLISTED" | "WITHDRAWN";
 }
 
 export interface Actor {

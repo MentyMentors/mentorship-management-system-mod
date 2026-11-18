@@ -41,6 +41,10 @@ export const authConfig = {
         pathname.startsWith("/reset-password") ||
         pathname.startsWith("/verify-email") ||
         pathname.startsWith("/p/") ||
+        pathname === "/programs" ||
+        pathname === "/run" ||
+        pathname === "/find-a-mentor" ||
+        pathname.startsWith("/signup") ||
         pathname.startsWith("/invite/");
 
       if (isPublic) {
@@ -59,7 +63,7 @@ export const authConfig = {
         ADMIN: "/admin",
         MENTOR: "/mentor",
         MENTEE: "/mentee",
-        USER: "/manage",
+        USER: "/dashboard",
       };
 
       if (pathname.startsWith("/admin") && user.role !== "ADMIN") {

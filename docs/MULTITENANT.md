@@ -1,6 +1,7 @@
 # Menty multi-tenancy — developer guide
 
-Status: **Phases 1–2 implemented** (foundation; programme creation and customisation).
+Status: **Phases 1–3 implemented** (foundation; programme creation and customisation;
+homepage, marketplace and onboarding). Phase 3: `docs/phase-3/README.md`.
 Design: `docs/phase-0/`. Deployment: `docs/phase-1/DEPLOY.md`. Phase 2: `docs/phase-2/README.md`.
 
 ## The model in one paragraph

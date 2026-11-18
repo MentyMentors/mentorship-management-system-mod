@@ -6,6 +6,8 @@ import { ArrowRight, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const links = [
+  { href: "/programs", label: "Find a programme" },
+  { href: "/run", label: "Run a programme" },
   { href: "#how", label: "How it works" },
   { href: "#events", label: "Events" },
   { href: "#features", label: "Features" },

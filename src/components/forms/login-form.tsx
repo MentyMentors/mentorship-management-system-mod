@@ -32,12 +32,22 @@ import { PasswordInput } from "@/components/ui/password-input";
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // Only same-site paths are honoured, so the link cannot send people away.
+  // Only same-site destinations are honoured, so the link cannot send people
+  // away. Auth.js passes an absolute URL; our own links pass a path.
+  // (Resolved at submit time: `window` does not exist during server render.)
   const callbackUrl = searchParams.get("callbackUrl");
-  const destination =
-    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//") && !callbackUrl.startsWith("/\\")
-      ? callbackUrl
-      : "/redirect";
+  const destination = () => {
+    if (!callbackUrl) return "/redirect";
+    try {
+      const target = new URL(callbackUrl, window.location.origin);
+      if (target.origin === window.location.origin && !target.pathname.startsWith("/login")) {
+        return `${target.pathname}${target.search}`;
+      }
+    } catch {
+      // ignore malformed values
+    }
+    return "/redirect";
+  };
   const [needsVerification, setNeedsVerification] = useState(false);
   const [resending, setResending] = useState(false);
   const form = useForm<LoginInput>({
@@ -89,7 +99,7 @@ export function LoginForm() {
     }
 
     toast.success("Welcome back!");
-    router.push(destination);
+    router.push(destination());
     router.refresh();
   }
 

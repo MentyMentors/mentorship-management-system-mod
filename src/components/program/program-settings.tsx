@@ -27,6 +27,7 @@ import {
 } from "@/components/program/program-fields";
 import { ThemeEditor, themeIssuesFor, type ThemeValue } from "@/components/program/theme-editor";
 import { ImageField } from "@/components/program/image-field";
+import { RegistrationsManager } from "@/components/program/registrations-manager";
 import { DELIVERY_MODEL_LABEL, OWNER_LABEL, STATUS_LABEL, STATUS_VARIANT } from "@/components/program/labels";
 
 export interface SettingsProgram {
@@ -45,6 +46,7 @@ export interface SettingsProgram {
   hostName: string;
   institution: { id: string; name: string } | null;
   memberCount: number;
+  legacyRegistration: boolean;
   openTransfer: { id: string; institutionName: string } | null;
 }
 
@@ -58,6 +60,9 @@ export interface Capabilities {
   verify: boolean;
   suspend: boolean;
   assign: boolean;
+  registrationsRead: boolean;
+  registrationsReview: boolean;
+  participantsManage: boolean;
 }
 
 export interface TeamData {
@@ -128,6 +133,7 @@ export function ProgramSettings({
     <Tabs defaultValue="overview" className="space-y-4">
       <TabsList className="flex h-auto flex-wrap justify-start">
         <TabsTrigger value="overview">Overview</TabsTrigger>
+        {can.registrationsRead && <TabsTrigger value="registrations">Registrations</TabsTrigger>}
         <TabsTrigger value="details">Details</TabsTrigger>
         <TabsTrigger value="branding">Branding</TabsTrigger>
         <TabsTrigger value="delivery">Mentorship model</TabsTrigger>
@@ -228,6 +234,18 @@ export function ProgramSettings({
           </Card>
         )}
       </TabsContent>
+
+      {/* ---------------- Registrations ---------------- */}
+      {can.registrationsRead && (
+        <TabsContent value="registrations">
+          <RegistrationsManager
+            programId={program.id}
+            canReview={can.registrationsReview}
+            canManage={can.participantsManage}
+            legacy={program.legacyRegistration}
+          />
+        </TabsContent>
+      )}
 
       {/* ---------------- Details ---------------- */}
       <TabsContent value="details">

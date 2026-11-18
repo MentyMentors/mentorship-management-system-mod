@@ -19,6 +19,9 @@ type Status = "verifying" | "success" | "error";
 export function VerifyEmailForm() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
+  const next = searchParams.get("next");
+  const loginHref =
+    next && next.startsWith("/") && !next.startsWith("//") ? `/login?callbackUrl=${encodeURIComponent(next)}` : "/login";
   const [status, setStatus] = useState<Status>(token ? "verifying" : "error");
   const [message, setMessage] = useState("");
 
@@ -79,7 +82,7 @@ export function VerifyEmailForm() {
         </CardHeader>
         <CardFooter className="justify-center">
           <Button asChild>
-            <Link href="/login">Go to log in</Link>
+            <Link href={loginHref}>Go to log in</Link>
           </Button>
         </CardFooter>
       </Card>

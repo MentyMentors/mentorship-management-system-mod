@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { db } from "@/lib/db";
 import { orNotFound } from "@/lib/admin-pages";
+import { DEFAULT_PROGRAM_SETTING } from "@/lib/rbac/scope";
 import { requireActor } from "@/lib/authz";
 import { can } from "@/lib/rbac/authorize";
 import { PERMISSIONS } from "@/lib/rbac/permissions";
@@ -19,10 +21,12 @@ export default async function ManageProgramPage({ params }: { params: Promise<{ 
   const { id } = await params;
   const { session, actor } = await orNotFound(() => requireActor());
   const { program, scope } = await orNotFound(() => getProgramForManagement({ id: session.user.id, actor }, id));
-  const [institutions, team] = await Promise.all([
+  const [institutions, team, legacySetting] = await Promise.all([
     listActiveInstitutions(),
     listStaff({ scopeType: "PROGRAM", programId: program.id, institutionId: program.institutionId, name: program.name }),
+    db.platformSetting.findUnique({ where: { key: DEFAULT_PROGRAM_SETTING } }),
   ]);
+  const legacyProgramId = legacySetting?.value ?? null;
 
   const draft = program.themes.find((t) => t.variant === "DRAFT") ?? program.themes.find((t) => t.variant === "PUBLISHED");
   const draftTheme: ThemeValue = draft
@@ -64,6 +68,7 @@ export default async function ManageProgramPage({ params }: { params: Promise<{ 
           hostName,
           institution: program.institution,
           memberCount: program._count.memberships,
+          legacyRegistration: legacyProgramId === program.id,
           openTransfer: transfer ? { id: transfer.id, institutionName: transfer.toInstitution.name } : null,
         }}
         form={fromProgram(program)}
@@ -78,6 +83,9 @@ export default async function ManageProgramPage({ params }: { params: Promise<{ 
           verify: can(actor, PERMISSIONS.PROGRAM_VERIFY, scope),
           suspend: can(actor, PERMISSIONS.PROGRAM_SUSPEND, scope),
           assign: can(actor, PERMISSIONS.PROGRAM_COORDINATOR_ASSIGN, scope),
+          registrationsRead: can(actor, PERMISSIONS.REGISTRATION_READ, scope),
+          registrationsReview: can(actor, PERMISSIONS.REGISTRATION_REVIEW, scope),
+          participantsManage: can(actor, PERMISSIONS.PARTICIPANT_MANAGE, scope),
         }}
         team={{
           assignments: team.assignments,

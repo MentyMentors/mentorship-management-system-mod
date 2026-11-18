@@ -25,7 +25,8 @@ describe("prisma migrations", () => {
   it.each(migrationFiles)("$name contains no psql-only syntax", ({ sql }) => {
     const code = withoutComments(sql);
     expect(code).not.toMatch(/(?<!:):'[A-Za-z_]/); // :'variable' (not a ::cast)
-    expect(code).not.toMatch(/(?<!:):"[A-Za-z_]/); // :"variable" (not a ::cast)
+    // :"variable" — ignoring text inside SQL string literals (e.g. JSON values).
+    expect(code.replace(/'(?:[^']|'')*'/g, "''")).not.toMatch(/(?<!:):"[A-Za-z_]/);
     expect(code).not.toMatch(/^\s*\\[a-z]/m); // \set, \i, \echo ...
   });
 
